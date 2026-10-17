@@ -49,6 +49,110 @@ starts it. A hardware reset or power cycle always returns to the menu.
 *Doom* and *Duke Nukem 3D* are included as native RP2350 ports — they are
 **not** emulated.
 
+## Getting started
+
+1. **Flash the bootloader.** Download the loader `.uf2` for your board from the
+   [Releases](https://github.com/PicoPlus-devel/pico-bootLoader/releases) page;
+   the table under [Supported hardware](#supported-hardware), below, gives the
+   file name for each board. Hold BOOTSEL, connect the board over USB, and copy
+   the `.uf2` onto the `RP2350` drive.
+2. **Prepare the SD card.** Download `pico-bootLoader_sdcard.zip` from the same
+   Releases page and unpack it onto a FAT32- or exFAT-formatted card. The
+   archive contains the emulators, the native ports, the menu artwork, a
+   sample configuration file and the `updateAll` ROM installer. Alternatively,
+   assemble the layout yourself as described in
+   [SD card layout](#sd-card-layout).
+3. **Add your games.** The archive contains no games, ROMs or BIOS files. Each
+   emulator's file browser opens in its own folder: `/roms/NES`, `/roms/SNES`,
+   `/roms/MD` (Genesis / Mega Drive), `/roms/PCE`, `/roms/GB`, `/roms/SMS`
+   (Master System and Game Gear), `/roms/O2E` (Videopac) or `/roms/TI99`, and
+   at the root of the card when that folder does not exist. The BIOS files and
+   the folders of *ColecoVision*, *Doom*, *Duke Nukem 3D* and the arcade games
+   are given under [Bootable applications](#bootable-applications); `updateAll`
+   installs the arcade ROM sets.
+4. **Run it.** Insert the card and power on the board. The menu appears.
+
+The Releases page provides two kinds of download: the per-board bootloader
+`.uf2` binaries and the `pico-bootLoader_sdcard.zip` SD-card archive.
+
+Release tags say which of the two changed:
+
+| Tag | What changed | What you need to do |
+| --- | --- | --- |
+| `v0.N` | bootloader firmware | re-flash the board **and** refresh the SD card |
+| `v0.N.M` | emulator binaries only | replace `/emu` on the SD card; no re-flash needed |
+
+Every release lists the exact emulator versions its archive ships, and the same
+table is in `/emu/versions.txt` on the card.
+
+## Supported hardware
+
+Only RP2350 boards are supported; the partition scheme and the UF2 family checks
+are RP2350-specific. The board is selected at compile time through the
+`HW_CONFIG` value (defined in
+[`pico_shared/BoardConfigs.cmake`](pico_shared/BoardConfigs.cmake)). The same
+number names the SD-card folder the loader reads applications from
+(`<BASEDIR>/<HW_CONFIG>/`).
+
+| HW_CONFIG | Board | Bootloader binary |
+|---|---|---|
+| 1 | Pimoroni Pico DV Demo Base (Pico 2 / Pico 2 W) | `pico-bootLoader_PimoroniDVI_pico2_arm.uf2` |
+| 2 | Adafruit DVI + microSD breakout, or the [PicoNES PCB](#picones-pcb-hw_config-2) (Pico 2 / Pico 2 W / Pimoroni Pico Plus 2) | `pico-bootLoader_AdafruitDVISD_pico2_arm.uf2` |
+| 5 | Adafruit Metro RP2350 | `pico-bootLoader_AdafruitMetroRP2350_arm.uf2` |
+| 6 | Waveshare RP2350-Zero with the [PicoNES Mini PCB](#picones-mini-pcb-hw_config-6) | `pico-bootLoader_WaveShareRP2350ZeroWithPCB_arm.uf2` |
+| 7 | Waveshare RP2350-PiZero | `pico-bootLoader_WaveShareRP2350PiZero_arm_piousb.uf2` |
+| 8 | Adafruit Fruit Jam | `pico-bootLoader_AdafruitFruitJam_arm_piousb.uf2` |
+| 9 | Waveshare RP2350-USB-A (optionally on the [PicoNES Micro PCB](#picones-micro-pcb-hw_config-9)) | `pico-bootLoader_WaveShare2350USBA_arm_piousb.uf2` |
+| 13 | Murmulator M2, or an RP2350 Plus on the [PicoSNES PCB](#picosnes-pcb-hw_config-13) | `pico-bootLoader_MurmulatorM2_arm.uf2` |
+| 14 | Adafruit Feather RP2350 (TLV320DAC3100 audio) | `pico-bootLoader_AdafruitFeatherRP2350_TLV320DAC3100_arm_piousb.uf2` |
+| 15 | Olimex RP2040-PICO-PC with a Raspberry Pi Pico 2 | `pico-bootLoader_OlimexPicoPC_arm.uf2` |
+
+Video output is DVI/HDMI on all boards. Boards whose video connector is wired
+to the RP2350 HSTX pins — HW_CONFIG 2, 5, 8, 13, 14 and 15 — drive it through the
+HSTX peripheral; the others use PicoDVI. A single SD card
+serves both kinds — artwork is cached in both pixel formats (see
+[Artwork](#artwork)).
+
+### Olimex RP2040-PICO-PC (HW_CONFIG 15)
+
+The [Olimex RP2040-PICO-PC](https://www.olimex.com/Products/MicroPython/PICO/RP2040-PICO-PC/)
+is a carrier board for a Raspberry Pi Pico, with HDMI, a microSD slot, a USB-A
+port, an audio jack and a UEXT connector. Despite its name, the loader runs on
+it with a **Raspberry Pi Pico 2** in the socket in place of the original Pico.
+Flash `pico-bootLoader_OlimexPicoPC_arm.uf2` and put the applications in
+`/emu/15/`.
+
+- **Video and sound.** HDMI is driven through HSTX. Sound plays on HDMI and on
+  the audio jack at the same time.
+- **Controllers.** A USB controller or keyboard goes in the USB-A port, and a
+  NES or SNES controller can be wired to the UEXT connector. The USB-A port is
+  connected to the Pico 2's own USB port, so a USB controller cannot be used
+  while the card is shown to a computer in [USB drive mode](#usb-drive-mode);
+  leave that mode from the NES/SNES controller or by ejecting the drive.
+- **Flash.** A standard Pico 2 has 4 MB of flash, which leaves 3.5 MB for the
+  application partition.
+- **PSRAM.** A standard Pico 2 has no PSRAM. A PSRAM chip can be added with its
+  chip-select pin on GPIO 8. Without it, the entries that require PSRAM — the
+  Super Nintendo emulator, *PCEngine CD*, *OutRun*, *Duke Nukem 3D* and
+  `doom_tiny_full` — still appear in the menu but do not run.
+
+Support for this board was contributed by
+[DnCraptor](https://github.com/DnCraptor).
+
+### Pico 2 W
+
+The Pico 2 W runs the ordinary `pico2` binary for its hardware configuration;
+there is no separate build for it. Up to v0.4 there was one, purely so that the
+on-board LED would work: that LED hangs off the wireless chip and reaching it
+means linking the CYW43 driver, which filled the 512 KB bootloader partition to
+within a few kilobytes and left no room for USB drive mode.
+
+Everything on the board therefore works as it does on a Pico 2, except the
+on-board LED, which no longer blinks as a heartbeat or while an application is
+being flashed. A build with the LED can still be produced locally with
+`./bld.sh -2 -c <HW_CONFIG> -w`; it is not released and USB drive mode is off in
+it by default.
+
 ## Video
 
 *Click the image below to watch pico-bootLoader in action.*
@@ -343,102 +447,6 @@ Behaviour depends on where controllers are connected on your board.
 
 USB drive mode is available on every released binary, the Pico 2 W included —
 see [Pico 2 W](#pico-2-w) for what that board does and does not do.
-
-## Getting started
-
-1. **Flash the bootloader.** Download the loader `.uf2` for your board from the
-   [Releases](https://github.com/PicoPlus-devel/pico-bootLoader/releases) page
-   (see [Supported hardware](#supported-hardware) for the file names). Hold
-   BOOTSEL, connect the board over USB, and copy the `.uf2` onto the
-   `RP2350` drive.
-2. **Prepare the SD card.** Download `pico-bootLoader_sdcard.zip` from the same
-   Releases page and unpack it onto a FAT32- or exFAT-formatted card. The
-   archive contains the emulators, the native ports, the menu artwork, a
-   sample configuration file and the `updateAll` ROM installer. Alternatively,
-   assemble the layout yourself as described in
-   [SD card layout](#sd-card-layout).
-3. **Run it.** Insert the card and power on the board. The menu appears.
-
-The Releases page provides two kinds of download: the per-board bootloader
-`.uf2` binaries and the `pico-bootLoader_sdcard.zip` SD-card archive.
-
-Release tags say which of the two changed:
-
-| Tag | What changed | What you need to do |
-| --- | --- | --- |
-| `v0.N` | bootloader firmware | re-flash the board **and** refresh the SD card |
-| `v0.N.M` | emulator binaries only | replace `/emu` on the SD card; no re-flash needed |
-
-Every release lists the exact emulator versions its archive ships, and the same
-table is in `/emu/versions.txt` on the card.
-
-## Supported hardware
-
-Only RP2350 boards are supported; the partition scheme and the UF2 family checks
-are RP2350-specific. The board is selected at compile time through the
-`HW_CONFIG` value (defined in
-[`pico_shared/BoardConfigs.cmake`](pico_shared/BoardConfigs.cmake)). The same
-number names the SD-card folder the loader reads applications from
-(`<BASEDIR>/<HW_CONFIG>/`).
-
-| HW_CONFIG | Board | Bootloader binary |
-|---|---|---|
-| 1 | Pimoroni Pico DV Demo Base (Pico 2 / Pico 2 W) | `pico-bootLoader_PimoroniDVI_pico2_arm.uf2` |
-| 2 | Adafruit DVI + microSD breakout, or the [PicoNES PCB](#picones-pcb-hw_config-2) (Pico 2 / Pico 2 W / Pimoroni Pico Plus 2) | `pico-bootLoader_AdafruitDVISD_pico2_arm.uf2` |
-| 5 | Adafruit Metro RP2350 | `pico-bootLoader_AdafruitMetroRP2350_arm.uf2` |
-| 6 | Waveshare RP2350-Zero with the [PicoNES Mini PCB](#picones-mini-pcb-hw_config-6) | `pico-bootLoader_WaveShareRP2350ZeroWithPCB_arm.uf2` |
-| 7 | Waveshare RP2350-PiZero | `pico-bootLoader_WaveShareRP2350PiZero_arm_piousb.uf2` |
-| 8 | Adafruit Fruit Jam | `pico-bootLoader_AdafruitFruitJam_arm_piousb.uf2` |
-| 9 | Waveshare RP2350-USB-A (optionally on the [PicoNES Micro PCB](#picones-micro-pcb-hw_config-9)) | `pico-bootLoader_WaveShare2350USBA_arm_piousb.uf2` |
-| 13 | Murmulator M2, or an RP2350 Plus on the [PicoSNES PCB](#picosnes-pcb-hw_config-13) | `pico-bootLoader_MurmulatorM2_arm.uf2` |
-| 14 | Adafruit Feather RP2350 (TLV320DAC3100 audio) | `pico-bootLoader_AdafruitFeatherRP2350_TLV320DAC3100_arm_piousb.uf2` |
-| 15 | Olimex RP2040-PICO-PC with a Raspberry Pi Pico 2 | `pico-bootLoader_OlimexPicoPC_arm.uf2` |
-
-Video output is DVI/HDMI on all boards. Boards whose video connector is wired
-to the RP2350 HSTX pins — HW_CONFIG 2, 5, 8, 13, 14 and 15 — drive it through the
-HSTX peripheral; the others use PicoDVI. A single SD card
-serves both kinds — artwork is cached in both pixel formats (see
-[Artwork](#artwork)).
-
-### Olimex RP2040-PICO-PC (HW_CONFIG 15)
-
-The [Olimex RP2040-PICO-PC](https://www.olimex.com/Products/MicroPython/PICO/RP2040-PICO-PC/)
-is a carrier board for a Raspberry Pi Pico, with HDMI, a microSD slot, a USB-A
-port, an audio jack and a UEXT connector. Despite its name, the loader runs on
-it with a **Raspberry Pi Pico 2** in the socket in place of the original Pico.
-Flash `pico-bootLoader_OlimexPicoPC_arm.uf2` and put the applications in
-`/emu/15/`.
-
-- **Video and sound.** HDMI is driven through HSTX. Sound plays on HDMI and on
-  the audio jack at the same time.
-- **Controllers.** A USB controller or keyboard goes in the USB-A port, and a
-  NES or SNES controller can be wired to the UEXT connector. The USB-A port is
-  connected to the Pico 2's own USB port, so a USB controller cannot be used
-  while the card is shown to a computer in [USB drive mode](#usb-drive-mode);
-  leave that mode from the NES/SNES controller or by ejecting the drive.
-- **Flash.** A standard Pico 2 has 4 MB of flash, which leaves 3.5 MB for the
-  application partition.
-- **PSRAM.** A standard Pico 2 has no PSRAM. A PSRAM chip can be added with its
-  chip-select pin on GPIO 8. Without it, the entries that require PSRAM — the
-  Super Nintendo emulator, *PCEngine CD*, *OutRun*, *Duke Nukem 3D* and
-  `doom_tiny_full` — still appear in the menu but do not run.
-
-Support for this board was contributed by
-[DnCraptor](https://github.com/DnCraptor).
-
-### Pico 2 W
-
-The Pico 2 W runs the ordinary `pico2` binary for its hardware configuration;
-there is no separate build for it. Up to v0.4 there was one, purely so that the
-on-board LED would work: that LED hangs off the wireless chip and reaching it
-means linking the CYW43 driver, which filled the 512 KB bootloader partition to
-within a few kilobytes and left no room for USB drive mode.
-
-Everything on the board therefore works as it does on a Pico 2, except the
-on-board LED, which no longer blinks as a heartbeat or while an application is
-being flashed. A build with the LED can still be produced locally with
-`./bld.sh -2 -c <HW_CONFIG> -w`; it is not released and USB drive mode is off in
-it by default.
 
 ## Custom PCBs
 

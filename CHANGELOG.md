@@ -304,7 +304,15 @@ For board-by-board wiring, supported display modes and more refer to the [pico-i
    Releases page and unpack it onto a FAT32- or exFAT-formatted card. The
    archive contains the emulators, the native ports, the menu artwork, a
    sample configuration file and the `updateAll` tool for the arcade ROMs.
-3. **Run it.** Insert the card and power on the board. The menu appears.
+3. **Add your games.** The archive contains no games, ROMs or BIOS files. Each
+   emulator opens in its own folder: `/roms/NES`, `/roms/SNES`, `/roms/MD`
+   (Genesis), `/roms/PCE`, `/roms/GB`, `/roms/SMS` (Master System and Game
+   Gear), `/roms/O2E` (Videopac) or `/roms/TI99`, or at the root of the card
+   when that folder does not exist. The BIOS files and the folders of the other
+   applications are listed in the README under
+   [Bootable applications](https://github.com/PicoPlus-devel/pico-bootLoader#bootable-applications);
+   `updateAll` installs the arcade ROM sets.
+4. **Run it.** Insert the card and power on the board. The menu appears.
 
 
 <a name="downloads___"></a>

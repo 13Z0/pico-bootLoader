@@ -187,10 +187,10 @@ from `github.sha`, so it will point at whatever is current.
   (`BUILD_FOR_BOOTLOADER`) only in `pico_shared` `f2c8be9`, and the emulator tags
   of the time predated it, so their pinned revision rejected `-b` outright.
   That reason no longer applies — every current tag pins a descendant of
-  `f2c8be9` — but the substitution is not a no-op. For v0.7.1 Phoenix v0.2.1,
-  Moon Cresta v0.2.1 and Galagino v0.1.2 pin `ce03f96`, which is `main`;
-  OutRun v0.5 and Dragon's Lair v0.1 pin `929281d`, and every other emulator tag
-  pins `6e65df4`. The whole bundle is built against the one `pico_shared` `main`
+  `f2c8be9` — but the substitution is not a no-op. For v0.7.2 1943 v0.1 pins
+  `82ac5d8`, which is `main`; Galagino v0.2 and OutRun v0.5.1 pin `9d81d14`,
+  Phoenix v0.2.2 and Moon Cresta v0.2.2 `ce03f96`, Dragon's Lair v0.1
+  `929281d`, and every other emulator tag pins `6e65df4`. The whole bundle is built against the one `pico_shared` `main`
   that `emu/versions.txt` records.
   An older tag that no longer builds against `main` shows up as a `FAIL` in the
   grand summary.

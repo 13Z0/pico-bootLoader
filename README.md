@@ -77,7 +77,7 @@ its own repository and identified by the program name embedded in its `.uf2`.
 | **OutRun** (native port, not emulated) | `picoOutRun` | [pico-outrun](https://github.com/PicoPlus-devel/pico-outrun) | <img width="280" alt="OutRun menu artwork" src="emu/assets/themes/0/outrun.png" /> |
 | **Phoenix** (arcade) | `picoPhoenix` | [pico-phoenix](https://github.com/PicoPlus-devel/pico-phoenix) | <img width="280" alt="Phoenix menu artwork" src="emu/assets/themes/0/phoenix.png" /> |
 | **Moon Cresta** (arcade) | `picoMoonCresta` | [pico-mooncresta](https://github.com/PicoPlus-devel/pico-mooncresta) | <img width="280" alt="Moon Cresta menu artwork" src="emu/assets/themes/0/mooncresta.png" /> |
-| **Galagino** (arcade: Pac-Man, Galaga, Donkey Kong, Frogger, Dig Dug, 1942) | `picoGalagino` | [pico-galagino](https://github.com/PicoPlus-devel/pico-galagino) | <img width="280" alt="Galagino menu artwork" src="emu/assets/themes/0/galagino.png" /> |
+| **Galagino** (arcade: 47 games, among them Pac-Man, Galaga, Donkey Kong and Xevious) | `picoGalagino` | [pico-galagino](https://github.com/PicoPlus-devel/pico-galagino) | <img width="280" alt="Galagino menu artwork" src="emu/assets/themes/0/galagino.png" /> |
 | **Dragon's Lair** (arcade, laserdisc) | `picoDragonsLair` | [pico-dragonslair](https://github.com/PicoPlus-devel/pico-dragonslair) | <img width="280" alt="Dragon's Lair menu artwork" src="emu/assets/themes/0/dragonslair.png" /> |
 | **1943** (arcade: 1943 and 1943 Kai) | `pico1943` | [pico-1943](https://github.com/PicoPlus-devel/pico-1943) | <img width="280" alt="1943 menu artwork" src="emu/assets/themes/0/1943.png" /> |
 
@@ -122,7 +122,7 @@ image: `DUKE3D.GRP` — shareware or registered/Atomic — is streamed from
 `/roms/duke3d/` on the SD card, with savegames and `duke3d.cfg` written next to
 it. All four have been tested on hardware.
 
-*OutRun* is a port of the Cannonball engine and one of the four entries in the
+*OutRun* is a port of the Cannonball engine and the first entry in the
 **Arcade** category. It is built for five boards: Adafruit Fruit Jam (HW_CONFIG 8),
 the Adafruit DVI + MicroSD breakout combination (2, on a Pimoroni Pico Plus 2),
 Murmulator M2 (13), Adafruit Feather RP2350 with a TLV320DAC3100 (14) and the
@@ -154,19 +154,26 @@ copyright Nichibutsu and is not distributed with the bundle: copy MAME's
 SD card, either as it is or unzipped. Missing files are named on screen. It has
 the same *Tate mode* setting as Phoenix.
 
-*Galagino* is the fourth **Arcade** entry: a port of Till Harbaum's Galagino,
-six arcade games in one application, chosen from a menu of their logos:
-Pac-Man, Galaga, Donkey Kong, Frogger, Dig Dug and 1942. It runs on every board
-the loader supports. The ROM sets are copyright of their makers and are not
-distributed with the bundle: copy each game's MAME zip to its own folder below
-`/roms/arcade` on the SD card, either as it is or unzipped: `puckman.zip` to
-`PACMAN`, `galaga.zip` to `GALAGA`, `dkong.zip` to `DONKEYKONG`, `frogger.zip`
-to `FROGGER`, `digdug.zip` to `DIGDUG` and `1942.zip` to `1942`. Its menu lists
-the games whose sets are complete. On boards without PSRAM it copies the sets
-into flash at start-up, once; when the loader has since written another
-application over that flash, the copy is made again, which takes a few seconds.
-It has the same *Tate mode* setting as Phoenix, and *Quit game* in its settings
-menu returns to its game menu.
+*Galagino* is the fourth **Arcade** entry: a port of Till Harbaum's Galagino
+and of its fork GalaginoPlus, 47 arcade games in one application, chosen from a
+menu of their logos. Among them are Pac-Man, Ms. Pac-Man, Galaga, Galaxian,
+Donkey Kong, Frogger, Dig Dug, 1942, Space Invaders, Mr. Do!, BurgerTime, Time
+Pilot, Mappy and Xevious. It runs on every board the loader supports. The ROM
+sets are copyright of their makers and are not distributed with the bundle:
+copy each game's MAME zip to its own folder below `/roms/arcade` on the SD card,
+either as it is or unzipped, for example `puckman.zip` to `PACMAN` and
+`galaga.zip` to `GALAGA`. The
+[pico-galagino README](https://github.com/PicoPlus-devel/pico-galagino#game-data)
+lists every set and its folder; Phoenix and Moon Cresta use the same sets and
+folders as their own entries. Its menu lists the games whose sets are complete.
+A game is read from the card each time it starts. On boards without PSRAM the
+larger games, among them 1942, BurgerTime, Gyruss and Xevious, are copied into
+flash instead, the first time they are started: the board shows a notice,
+restarts, makes the copy, which takes a few seconds, and starts the game. When
+the loader has since written another application over that flash, the copy is
+made again. High scores are saved on the card, in `/SAVES/GALAGINO`. It has the
+same *Tate mode* setting as Phoenix, and *Quit game* in its settings menu
+returns to its game menu.
 
 *Dragon's Lair* is the fifth **Arcade** entry: an emulation of Cinematronics'
 1983 laserdisc arcade board and its Pioneer LD-V1000 player. It runs on every
@@ -1108,10 +1115,11 @@ stamps a version.
 > (`BUILD_FOR_BOOTLOADER`) in `pico_shared` `f2c8be9`, and the emulator release
 > tags of the time predated it — their pinned `pico_shared` rejected `-b`
 > outright, so no bootloader-format `.uf2` could be produced from it. That
-> reason no longer applies, but the substitution still matters: in the v0.7.1
-> bundle Phoenix, Moon Cresta and Galagino pin `ce03f96`, which is `main`, while
-> OutRun and Dragon's Lair pin `929281d` and the other emulators the older
-> `6e65df4`, and are built against `ce03f96` all the same.
+> reason no longer applies, but the substitution still matters: in the v0.7.2
+> bundle 1943 pins `82ac5d8`, which is `main`, while Galagino and OutRun pin
+> `9d81d14`, Phoenix and Moon Cresta `ce03f96`, Dragon's Lair `929281d` and the
+> other emulators the older `6e65df4`, and are built against `82ac5d8` all the
+> same.
 > `emu/versions.txt` records `main`, the revision every emulator was actually
 > built against.
 
@@ -1198,8 +1206,10 @@ gh release upload v0.2.1 releases/pico-bootLoader_sdcard.zip
   [ColecoJam](https://github.com/cogliano/Adafruit_ColecoJam), is the work of
   Dan Cogliano ([@cogliano](https://github.com/cogliano)). Many thanks to him for
   writing it and for making it available to this project.
-- The six games of *Galagino* are emulated by
-  [Galagino](https://github.com/harbaum/galagino), by Till Harbaum, of which
+- The games of *Galagino* are emulated by
+  [Galagino](https://github.com/harbaum/galagino), by Till Harbaum, and its fork
+  [GalaginoPlus](https://github.com/VirtualClaudioBoy/GalaginoPlus), by
+  VirtualClaudioBoy, of which
   [pico-galagino](https://github.com/PicoPlus-devel/pico-galagino) is a port.
 - *1943* follows MAME's 1943 driver, and the research of
   [Liu Szuping](https://github.com/szuping) for an earlier RP2350 port of the

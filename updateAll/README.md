@@ -68,7 +68,7 @@ pico-galagino plays the Midway Pac-Man, MAME's `pacman`, a clone of `puckman`. A
 
 pico-1943 plays four versions of 1943; updateAll installs the US one, MAME's `1943u` (revision C), a clone of `1943`. A merged `1943.zip`, which the download database provides, holds all of its files; with a split set, have `1943u.zip` and `1943.zip` in the zip folder together. pico-1943's table of sets, `c1943/c1943_sets.c`, is the source of the two entries: `tools/mkupdateall.py` in pico-1943 writes them into `updateAll.json`.
 
-The pico-galagino sets are those of the games of GalaginoPlus; they are installed in full even while the application does not play all of them yet. Its table of sets, `galagino/gal_games.c`, is the source of these entries: `tools/mkupdateall.py` in pico-galagino writes them into `updateAll.json`.
+The pico-galagino sets are those of the 47 games it plays from GalaginoPlus, all of them from its v0.2 on. Its table of sets, `galagino/gal_games.c`, is the source of these entries: `tools/mkupdateall.py` in pico-galagino writes them into `updateAll.json`.
 
 ## Windows program
 

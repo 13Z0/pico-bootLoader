@@ -8,13 +8,11 @@ A resident .uf2 bootloader / front-end for the RP2350 retro-emulator family (pic
 
 ## v0.7.2
 
-An SD-card update: **1943** joins the Arcade category, and **updateAll** now
-also installs the ROM sets of the games of GalaginoPlus, which Galagino is being
-extended to: 47 sets in all, each in its own folder below `/roms/arcade`.
-Galagino lists a game once it can play it.
-
-**updateAll** now fetches the latest list of sets from GitHub each time it
-starts, so sets added later no longer need an SD-card update.
+An SD-card update: **Galagino** now plays 47 arcade games instead of six, and
+**1943** joins the Arcade category. **updateAll** installs the ROM sets of all
+of them, and now fetches the latest list of sets from GitHub each time it
+starts, so sets added later no longer need an SD-card update. The loader itself
+is unchanged since v0.7.
 
 > **Do you need to update?** Only the card. Replace the `/emu` folder on it with
 > the one in the new `pico-bootLoader_sdcard.zip`, and copy its `updateAll`
@@ -28,6 +26,31 @@ Kaisen* on every board. When both games are on the card, a menu chooses one at
 start-up. The games are not included: copy MAME's `1943.zip` to
 `/roms/arcade/1943` and `1943kai.zip` to `/roms/arcade/1943KAI`, or let
 **updateAll** install them.
+
+### Updated applications
+
+- **Galagino**
+  [v0.2](https://github.com/PicoPlus-devel/pico-galagino/releases/tag/v0.2):
+  41 more games, from [GalaginoPlus](https://github.com/VirtualClaudioBoy/GalaginoPlus),
+  among them *Ms. Pac-Man*, *Donkey Kong Jr.*, *Galaxian*, *Space Invaders*,
+  *Mr. Do!*, *BurgerTime*, *Time Pilot*, *Mappy* and *Xevious*. Each game reads
+  its MAME zip from its own folder below `/roms/arcade`; the
+  [pico-galagino README](https://github.com/PicoPlus-devel/pico-galagino#game-data)
+  lists them, and **updateAll** installs them. High scores are now saved on the
+  card. On boards without PSRAM, only the larger games are copied into flash,
+  the first time they are started. Left alone, the game menu shows one game
+  after another.
+- **Phoenix**
+  [v0.2.2](https://github.com/PicoPlus-devel/pico-phoenix/releases/tag/v0.2.2),
+  **Moon Cresta**
+  [v0.2.2](https://github.com/PicoPlus-devel/pico-mooncresta/releases/tag/v0.2.2)
+  and **OutRun**
+  [v0.5.1](https://github.com/PicoPlus-devel/pico-outrun/releases/tag/v0.5.1)
+  play as before; their own release pages now also offer `updateAll.exe`.
+
+Every other application is the same version as in v0.7.1. The exact version of
+every application is in the table at the end of this page and in
+`/emu/versions.txt`.
 
 ## v0.7.1
 

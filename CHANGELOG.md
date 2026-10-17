@@ -19,6 +19,13 @@ is unchanged since v0.7.
 > folder as well. The board does not have to be re-flashed, and your ROMs, save
 > states and everything else outside `/emu` are untouched.
 
+**Update:** the SD-card archive now has **1943**
+[v0.1.1](https://github.com/PicoPlus-devel/pico-1943/releases/tag/v0.1.1). On
+boards without PSRAM, such as a Pico 2 on the PicoNES PCB, 1943 stopped at
+start-up with an "Out of memory" error when its games had been installed
+unzipped, the way updateAll installs them. If you downloaded the archive
+before, replace the `/emu` folder on your card again.
+
 ### New on the card
 
 **1943** plays Capcom's *1943: The Battle of Midway* and *1943 Kai: Midway

@@ -16,7 +16,7 @@ picoPhoenix;pico-phoenix;v0.2.2;82ac5d8
 picoMoonCresta;pico-mooncresta;v0.2.2;82ac5d8
 picoGalagino;pico-galagino;v0.2;82ac5d8
 picoDragonsLair;pico-dragonslair;v0.1;82ac5d8
-pico1943;pico-1943;v0.1;82ac5d8
+pico1943;pico-1943;v0.1.1;82ac5d8
 pico994A;pico-994A;v0.3;82ac5d8
 piconesPlus;pico-infonesPlus;v0.54;82ac5d8
 picosnesPlus;pico-snesPlus;v0.8;82ac5d8

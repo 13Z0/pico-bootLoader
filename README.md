@@ -3,8 +3,8 @@
 
 
 pico-bootLoader is a bootloader for RP2350 boards. Its primary purpose is to
-host a collection of retro-game emulators and native ports of *Doom* and
-*Duke Nukem 3D* on a single board and to let the user choose which one to run
+host a collection of retro-game emulators and native ports of *Doom*,
+*Duke Nukem 3D* and *Quake II* on a single board and to let the user choose which one to run
 from an on-screen menu, without reconnecting the board to a computer.
 
 It runs on ten board configurations, each with its own ready-made binary — see
@@ -46,8 +46,8 @@ mode with full-screen artwork per application or a plain text mode. Selecting an
 entry flashes the corresponding application (if it is not already resident) and
 starts it. A hardware reset or power cycle always returns to the menu.
 
-*Doom* and *Duke Nukem 3D* are included as native RP2350 ports — they are
-**not** emulated.
+*Doom*, *Duke Nukem 3D* and *Quake II* are included as native RP2350 ports —
+they are **not** emulated.
 
 ## Getting started
 
@@ -67,8 +67,8 @@ starts it. A hardware reset or power cycle always returns to the menu.
    `/roms/MD` (Genesis / Mega Drive), `/roms/PCE`, `/roms/GB`, `/roms/SMS`
    (Master System and Game Gear), `/roms/O2E` (Videopac) or `/roms/TI99`, and
    at the root of the card when that folder does not exist. The BIOS files and
-   the folders of *ColecoVision*, *Doom*, *Duke Nukem 3D* and the arcade games
-   are given under [Bootable applications](#bootable-applications); `updateAll`
+   the folders of *ColecoVision*, *Doom*, *Duke Nukem 3D*, *Quake II* and the
+   arcade games are given under [Bootable applications](#bootable-applications); `updateAll`
    installs the arcade ROM sets.
 4. **Run it.** Insert the card and power on the board. The menu appears.
 
@@ -178,6 +178,7 @@ its own repository and identified by the program name embedded in its `.uf2`.
 | Texas Instruments TI-99/4A | `pico994A` | [pico-994A](https://github.com/PicoPlus-devel/pico-994A) | <img width="280" alt="TI-99/4A menu artwork" src="emu/assets/themes/0/ti99.png" /> |
 | **Doom** (native port, not emulated) | `doom_tiny` | [pico-doom](https://github.com/PicoPlus-devel/pico-doom) | <img width="280" alt="Doom menu artwork" src="https://github.com/user-attachments/assets/112fb4f3-a806-4f60-83fb-59f70fbffbff" />|
 | **Duke Nukem 3D** (native port, not emulated) | `duke3d_game` | [pico-duke3D](https://github.com/PicoPlus-devel/pico-duke3D) |<img width="280" alt="Duke Nukem 3D menu artwork" src="https://github.com/user-attachments/assets/79798fb3-5517-41cf-bfcb-62c0aa0dc00e" />  |
+| **Quake II** (native port, not emulated) | `pico-quake2` | [pico-quake2](https://github.com/PicoPlus-devel/pico-quake2) | <img width="280" alt="Quake II menu artwork" src="emu/assets/themes/0/quake2.png" /> |
 | **OutRun** (native port, not emulated) | `picoOutRun` | [pico-outrun](https://github.com/PicoPlus-devel/pico-outrun) | <img width="280" alt="OutRun menu artwork" src="emu/assets/themes/0/outrun.png" /> |
 | **Phoenix** (arcade) | `picoPhoenix` | [pico-phoenix](https://github.com/PicoPlus-devel/pico-phoenix) | <img width="280" alt="Phoenix menu artwork" src="emu/assets/themes/0/phoenix.png" /> |
 | **Moon Cresta** (arcade) | `picoMoonCresta` | [pico-mooncresta](https://github.com/PicoPlus-devel/pico-mooncresta) | <img width="280" alt="Moon Cresta menu artwork" src="emu/assets/themes/0/mooncresta.png" /> |
@@ -225,6 +226,24 @@ chip fitted on GPIO 8). It needs **PSRAM** on all four. There is no companion da
 image: `DUKE3D.GRP` — shareware or registered/Atomic — is streamed from
 `/roms/duke3d/` on the SD card, with savegames and `duke3d.cfg` written next to
 it. All four have been tested on hardware.
+
+*Quake II* runs on two boards: Adafruit Fruit Jam (HW_CONFIG 8) and the Adafruit
+DVI + MicroSD breakout combination (2, on a Pimoroni Pico Plus 2). It needs 8 MB
+of **PSRAM** and 16 MB of flash. The game data is not included: the shareware
+demo is available as `pico-quake2_demo_sdcard.zip` from the
+[pico-quake2 releases](https://github.com/PicoPlus-devel/pico-quake2/releases),
+and is unpacked to the root of the card, which puts `pak0.pak` in
+`/roms/quake2/baseq2/`; the `baseq2` folder of the full game goes in the same
+place. Savegames and settings are written there too. The first load of each
+level copies its textures, models and sounds from the card into flash, above the
+application, and takes considerably longer than later loads. Other applications
+may overwrite that copy; it is then refreshed on the next load. On HW_CONFIG 2,
+*Quake II* reads USB controllers only from a USB-A socket on GPIO 20 (D+) and
+21 (D−), not from the Pico's own USB port that the loader and the emulators
+use; NES and SNES controllers in the controller ports work as usual. *Quake II*
+is an early pre-release; its
+[README](https://github.com/PicoPlus-devel/pico-quake2#status-and-limitations)
+lists the known limitations.
 
 *OutRun* is a port of the Cannonball engine and the first entry in the
 **Arcade** category. It is built for five boards: Adafruit Fruit Jam (HW_CONFIG 8),
@@ -572,9 +591,10 @@ change what the menu can offer:
   An application that does not fit is simply **not listed** in the menu rather
   than reported as an error, so on a Pico 2 some entries are missing. *Doom!* is
   the clearest case: its engine plus the companion WAD image needs about 4.3 MB.
-- **PSRAM.** The entries that require it — *Duke Nukem 3D*, *PCEngine CD* and
-  `doom_tiny_full` — are the Pimoroni Pico Plus 2's alone; neither Pico 2 has
-  PSRAM. See [Bootable applications](#bootable-applications).
+- **PSRAM.** The entries that require it — *Duke Nukem 3D*, *Quake II*,
+  *PCEngine CD* and `doom_tiny_full` — are the Pimoroni Pico Plus 2's alone;
+  neither Pico 2 has PSRAM. *Quake II* also needs the 16 MB of flash. See
+  [Bootable applications](#bootable-applications).
 
 #### 3D printed case
 
@@ -1133,18 +1153,22 @@ stamps a version.
 
 The native ports and *ColecoVision* are the exception to all of the above.
 [pico-doom](https://github.com/PicoPlus-devel/pico-doom),
-[pico-duke3D](https://github.com/PicoPlus-devel/pico-duke3D) and
+[pico-duke3D](https://github.com/PicoPlus-devel/pico-duke3D),
+[pico-quake2](https://github.com/PicoPlus-devel/pico-quake2) and
 [Adafruit_ColecoJam](https://github.com/cogliano/Adafruit_ColecoJam) have no
-`pico_shared`, so there is no `SWVERSION` to stamp, and all three build through
+`pico_shared`, so there is no `SWVERSION` to stamp, and all four build through
 their own per-board `<board>-build-forbootloader.sh` scripts rather than
 `bld.sh`. Each targets only the boards it has a script for — *Doom* 2, 8, 13, 14
-and 15, *Duke Nukem 3D* 2, 8, 13 and 15, *ColecoVision* 8 — and is reported as `SKIP` for
-every other configuration. The *ColecoVision* build downloads its own
-dependencies, so it needs network access.
+and 15, *Duke Nukem 3D* 2, 8, 13 and 15, *Quake II* 2 and 8, *ColecoVision* 8 —
+and is reported as `SKIP` for every other configuration. The *ColecoVision*
+build downloads its own dependencies, so it needs network access. The *Quake II*
+build produces `quake2.uf2`, which is installed as `pico-quake2.uf2` (the
+`SCRIPTED_UF2_OF` table), and needs `PICO_PIO_USB_PATH` on both of its boards;
+without it, it is skipped on HW_CONFIG 2 as well.
 
-All three repositories are tagged and are built from their latest tag like the
+All four repositories are tagged and are built from their latest tag like the
 emulators, so `versions.txt` records a real version for `doom_tiny`,
-`doom_tiny_full`, `duke3d_game` and `colecojam`. The tag is simply the newest by
+`doom_tiny_full`, `duke3d_game`, `pico-quake2` and `colecojam`. The tag is simply the newest by
 version order, whether or not it carries a `v` prefix (Adafruit_ColecoJam's
 tags do not), so later tags are picked up with no change here. This applies to
 the emulators as well: a tag whose GitHub release is marked as a pre-release,
@@ -1152,7 +1176,7 @@ such as Adafruit_ColecoJam's beta `2.0b1`, is skipped in favour of the newest
 full release. `build_emulators.sh` asks the GitHub API through `gh` for this,
 and warns when it cannot, in which case every tag is a candidate. The
 `SCRIPTED_BRANCH` table in [`build_emulators.sh`](build_emulators.sh) — `main`
-for *Doom* and *ColecoVision*, `fix/audio-production-rate` for *Duke Nukem 3D* —
+for *Doom*, *Quake II* and *ColecoVision*, `fix/audio-production-rate` for *Duke Nukem 3D* —
 is now only the fallback for a repository that has no tag at all.
 
 Repositories are cloned from the `PicoPlus-devel` organisation by default. An
@@ -1165,7 +1189,7 @@ form.
 [pico-extras](https://github.com/raspberrypi/pico-extras) checkout, since it
 resolves its whole toolchain from the environment. Without it the two Doom
 variants are skipped with that reason and everything else — *Duke Nukem 3D*
-included — still builds.
+and *Quake II* included — still builds.
 
 ```bash
 ./build_emulators.sh -c 8            # one board, latest tags

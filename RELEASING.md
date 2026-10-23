@@ -7,7 +7,7 @@ they have different lifecycles:
 | --- | --- | --- |
 | `pico-bootLoader_<board>_arm[_piousb].uf2` (10 files) | CI, on the self-hosted runner | attached automatically by the workflow |
 | `pico-bootLoader_sdcard.zip` | **locally**, by `build_emulators.sh -c all -z` | `gh release upload`, by hand |
-| PCB gerbers (3 zips: PicoNES v2.6, Mini v2.0, Micro v1.2) | nobody — vendored in the `pico_shared` submodule | attached automatically by the workflow |
+| PCB gerbers (4 zips: PicoNES v2.6, PicoNES v2.8, Mini v2.0, Micro v1.2) | nobody — vendored in the `pico_shared` submodule | attached automatically by the workflow |
 
 The archive is not built in CI because it needs every application's toolchain and
 takes hours; the loader builds take minutes. That split is why step 4 below is
@@ -30,6 +30,22 @@ A set added to `updateAll/updateAll.json` needs no release: every copy of
 updateAll from v0.7.2 on reads that file from `main` at start-up (its
 `config_url`), and falls back to the copy on the card only when it cannot. Keep
 the file on `main` at least as complete as the one in the latest archive.
+
+The game data in its `data` list is downloaded from fixed tags or releases of
+other repositories, which must exist before the file on `main` names them.
+Doom's entry downloads `doom1.whx` from the pico-doom tag v0.3 and converts it
+into `doom1-whx-bootloader.uf2` at 0x10200000 itself; pico-doom does not release
+that file, so that it cannot be flashed by mistake. The address in the entry
+must match pico-doom's bootloader builds (`TINY_WAD_ADDR` in its
+`*_cflags.h`). `build_emulators.sh` builds Doom from pico-doom's latest release
+tag, so that tag must be v0.4 or later, the first to put the WAD there on every
+board and to name it `doom1-whx-bootloader.uf2`. The SD-card archive no longer
+packs the WAD image, so a card made from it runs *Doom!* only after updateAll
+has run.
+
+The pico-dragonslair and pico-quake2 releases attach an `updateAll.exe` too,
+built by their own workflows from this repository's `main`. A change to
+updateAll reaches them only once it is merged and their next release is cut.
 
 ## Prerequisites
 
@@ -90,7 +106,12 @@ Check the grand summary before going further. Every emulator should be `BUILT`
 for the boards it supports. `SKIP` is expected for excluded combinations
 (`picogenesisPlus` on HW 7; `picosnesPlus` and `picoOutRun` on HW 1, 5, 6, 7, 9;
 Doom outside boards 2, 8, 13, 14, 15; `duke3d_game` outside boards 2, 8, 13, 15;
-`colecojam` outside board 8). Any `FAIL` or `MISSING` means the archive is
+`pico-quake2` outside boards 2, 8; `colecojam` outside board 8). A `FAIL` for
+`pico-quake2` that says `fruitjam-build-forbootloader.sh not found` means its
+latest release tag predates the bootloader build scripts; tag a newer
+pico-quake2 release first. Likewise, a `FAIL` for `doom_tiny` that says
+`aux image doom1-whx-bootloader.uf2 not produced` means pico-doom's latest tag
+predates v0.4. Any `FAIL` or `MISSING` means the archive is
 incomplete — fix it and re-run rather than shipping a partial card.
 
 The packer refuses to build an archive containing a 0-byte `.uf2`, so a failed
@@ -150,8 +171,9 @@ gh release view v0.2.1
   (`unzip -l releases/pico-bootLoader_sdcard.zip | grep updateAll/`), and its
   `ld2pico/` folder holds `ld2pico.exe` and its README
   (`unzip -l releases/pico-bootLoader_sdcard.zip | grep ld2pico/`).
-- **3 PCB gerber assets** — `pico_nesPCB_v2.6.zip`,
-  `Gerber_PicoNES_Mini_PCB_v2.0.zip` and `Gerber_PicoNES_Micro_v1.2.zip`,
+- **4 PCB gerber assets** — `pico_nesPCB_v2.6.zip`,
+  `pico_nesPCB_v2.8_SNES_PORTS.zip`, `Gerber_PicoNES_Mini_PCB_v2.0.zip` and
+  `Gerber_PicoNES_Micro_v1.2.zip`,
   attached by the workflow from the `pico_shared` submodule. See
   [Custom PCBs](README.md#custom-pcbs).
 - For a `v0.N.M` tag, the "SD-card content update" banner follows the
@@ -160,8 +182,9 @@ gh release view v0.2.1
   in the Version column.
 - On hardware: unzip the archive at the root of a FAT32/exFAT card, boot, confirm
   the picker lists every entry, launch one emulator and check it shows its
-  version rather than a build date. Launch *Doom!* and confirm the WAD flashes
-  instead of logging `AUX_ERROR`.
+  version rather than a build date. Run updateAll on the card, launch *Doom!*
+  and confirm the WAD flashes from `/roms/doom/`. Without the file, *Doom!*
+  shows "DATA FILE NOT FOUND" instead of starting.
 
 ## Rolling back
 

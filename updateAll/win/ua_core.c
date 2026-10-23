@@ -173,6 +173,70 @@ static char *path_join(const char *a, const char *b)
     return fmt("%s%s%s", a, need ? sep : "", b);
 }
 
+/* The netloc of a URL, as urllib.parse.urlsplit finds it: from after "://"
+   to the first "/", "?" or "#". *len gets its length. */
+static const char *url_netloc(const char *url, size_t *len)
+{
+    const char *p = strstr(url, "://");
+    p = p ? p + 3 : url;
+    *len = strcspn(p, "/?#");
+    return p;
+}
+
+static int hex_digit(int c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : (c = lower(c)) >= 'a' && c <= 'f' ? c - 'a' + 10 : -1;
+}
+
+/* unquote(urlsplit(url).path.rsplit("/", 1)[-1]). */
+static char *url_file_name(const char *url)
+{
+    size_t n;
+    const char *path = url_netloc(url, &n) + n;
+    size_t plen = strcspn(path, "?#");
+    const char *last = path;
+    for (size_t i = 0; i < plen; i++)
+        if (path[i] == '/')
+            last = path + i + 1;
+    n = (size_t)(path + plen - last);
+    char *name = xmalloc(n + 1), *o = name;
+    for (size_t i = 0; i < n; i++) {
+        int hi, lo;
+        if (last[i] == '%' && i + 2 < n && (hi = hex_digit((unsigned char)last[i + 1])) >= 0 &&
+            (lo = hex_digit((unsigned char)last[i + 2])) >= 0) {
+            *o++ = (char)(hi * 16 + lo);
+            i += 2;
+        } else {
+            *o++ = last[i];
+        }
+    }
+    *o = 0;
+    return name;
+}
+
+/* urlsplit(url).hostname, or the URL itself when it has none. */
+static char *url_host(const char *url)
+{
+    size_t n;
+    const char *p = url_netloc(url, &n);
+    for (size_t i = n; i > 0; i--) {
+        if (p[i - 1] == '@') {
+            n -= i;
+            p += i;
+            break;
+        }
+    }
+    size_t hn = 0;
+    while (hn < n && p[hn] != ':')
+        hn++;
+    if (!hn)
+        return xstrdup(url);
+    char *host = fmt("%.*s", (int)hn, p);
+    for (char *s = host; *s; s++)
+        *s = (char)lower((unsigned char)*s);
+    return host;
+}
+
 static const char *base_name(const char *p)
 {
     const char *b = p;
@@ -316,13 +380,14 @@ static const char *str_field(const cJSON *obj, const char *key)
     return cJSON_IsString(v) ? v->valuestring : NULL;
 }
 
-static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
+/* One entry of "cores", or of "data" when is_data is set. */
+static int parse_core(const cJSON *d, int is_data, ua_core *c, strv *ids, const char *path,
                       char *err, size_t errlen)
 {
     const char *cid = str_field(d, "id");
     if (!cid)
         cid = "?";
-    static const char *const keys[] = { "id", "name", "zips", "destination", "files" };
+    const char *const keys[] = { "id", "name", is_data ? "url" : "zips", "destination", "files" };
     for (int k = 0; k < 5; k++) {
         if (!cJSON_IsObject(d) || !cJSON_GetObjectItemCaseSensitive(d, keys[k])) {
             set_err(err, errlen, "%s: core '%s' has no '%s'", path, cid, keys[k]);
@@ -332,7 +397,7 @@ static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
     const char *name = str_field(d, "name"), *destination = str_field(d, "destination");
     const cJSON *zips = cJSON_GetObjectItemCaseSensitive(d, "zips");
     const cJSON *files = cJSON_GetObjectItemCaseSensitive(d, "files");
-    if (!str_field(d, "id") || !name || !destination || !cJSON_IsArray(zips) ||
+    if (!str_field(d, "id") || !name || !destination || (!is_data && !cJSON_IsArray(zips)) ||
         !cJSON_IsArray(files)) {
         set_err(err, errlen, "%s: core '%s': 'id', 'name' and 'destination' must be "
                 "strings, 'zips' and 'files' lists", path, cid);
@@ -348,6 +413,56 @@ static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
     c->id = xstrdup(cid);
     c->name = xstrdup(name);
     c->set = xstrdup(str_field(d, "set") ? str_field(d, "set") : "");
+
+    strv zv = { 0 };
+    if (is_data) {
+        /* The file is kept in the zip folder under the last part of the URL. */
+        const char *url = str_field(d, "url");
+        char *zname = url && ua_is_url(url) ? url_file_name(url) : xstrdup("");
+        if (bad_name(zname)) {
+            set_err(err, errlen, "%s: core '%s' has an invalid url '%s'", path, cid,
+                    url ? url : "");
+            free(zname);
+            return -1;
+        }
+        strv_push(&zv, zname);
+        const cJSON *archives = cJSON_GetObjectItemCaseSensitive(d, "archives");
+        strv av = { 0 };
+        int ok = !archives || cJSON_IsArray(archives);
+        const cJSON *a;
+        if (archives && ok) {
+            cJSON_ArrayForEach(a, archives) {
+                if (!cJSON_IsString(a) || bad_name(a->valuestring)) {
+                    ok = 0;
+                    break;
+                }
+                strv_push(&av, xstrdup(a->valuestring));
+            }
+        }
+        if (!ok) {
+            set_err(err, errlen, "%s: core '%s' has an invalid archive name", path, cid);
+            strv_free(&av);
+            strv_free(&zv);
+            return -1;
+        }
+        if (!av.v)
+            av.v = xmalloc(sizeof *av.v), av.v[0] = NULL;
+        c->url = xstrdup(url);
+        c->archives = av.v;
+        c->narchives = av.n;
+        const cJSON *uf2 = cJSON_GetObjectItemCaseSensitive(d, "uf2");
+        if (uf2 && !cJSON_IsNull(uf2)) {
+            if (!cJSON_IsObject(uf2) ||
+                parse_crc(cJSON_GetObjectItemCaseSensitive(uf2, "address"), &c->uf2_address) ||
+                parse_crc(cJSON_GetObjectItemCaseSensitive(uf2, "family"), &c->uf2_family)) {
+                set_err(err, errlen, "%s: core '%s' needs a hexadecimal 'address' and 'family' "
+                        "in 'uf2'", path, cid);
+                strv_free(&zv);
+                return -1;
+            }
+            c->uf2 = 1;
+        }
+    }
 
     /* destination.replace("\\", "/").strip("/").split("/") */
     char *dest = xstrdup(destination);
@@ -375,6 +490,7 @@ static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
         set_err(err, errlen, "%s: core '%s' has an invalid destination '%s'", path, cid,
                 destination);
         strv_free(&parts);
+        strv_free(&zv);
         free(dest);
         return -1;
     }
@@ -382,19 +498,21 @@ static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
     c->dest_shown = fmt("/%s", s);
     free(dest);
 
-    if (!cJSON_GetArraySize(zips) || !cJSON_GetArraySize(files)) {
+    if ((!is_data && !cJSON_GetArraySize(zips)) || !cJSON_GetArraySize(files)) {
         set_err(err, errlen, "%s: core '%s' needs at least one zip and one file", path, cid);
+        strv_free(&zv);
         return -1;
     }
-    strv zv = { 0 };
     const cJSON *z;
-    cJSON_ArrayForEach(z, zips) {
-        if (!cJSON_IsString(z) || bad_name(z->valuestring)) {
-            set_err(err, errlen, "%s: core '%s' has an invalid zip name", path, cid);
-            strv_free(&zv);
-            return -1;
+    if (!is_data) {
+        cJSON_ArrayForEach(z, zips) {
+            if (!cJSON_IsString(z) || bad_name(z->valuestring)) {
+                set_err(err, errlen, "%s: core '%s' has an invalid zip name", path, cid);
+                strv_free(&zv);
+                return -1;
+            }
+            strv_push(&zv, xstrdup(z->valuestring));
         }
-        strv_push(&zv, xstrdup(z->valuestring));
     }
     c->zips = zv.v;
     c->nzips = zv.n;
@@ -403,7 +521,22 @@ static int parse_core(const cJSON *d, ua_core *c, strv *ids, const char *path,
     const cJSON *f;
     cJSON_ArrayForEach(f, files) {
         const char *fname = cJSON_IsObject(f) ? str_field(f, "name") : NULL;
-        if (!fname || bad_name(fname)) {
+        /* Game data may go into subfolders of its destination; ROM sets may
+           not, as older copies of updateAll would reject that. */
+        int bad = !fname || bad_name(fname);
+        if (fname && is_data) {
+            bad = 0;
+            for (const char *p = fname;; p++) {
+                size_t n = strcspn(p, "/");
+                char *part = fmt("%.*s", (int)n, p);
+                bad |= bad_name(part);
+                free(part);
+                p += n;
+                if (!*p)
+                    break;
+            }
+        }
+        if (bad) {
             set_err(err, errlen, "%s: core '%s' has an invalid file name '%s'", path, cid,
                     fname ? fname : "");
             return -1;
@@ -440,13 +573,23 @@ int ua_config_parse(const char *text, size_t len, const char *path, const char *
         set_err(err, errlen, "%s: no cores defined", path);
         goto done;
     }
-    cfg->cores = xmalloc((size_t)cJSON_GetArraySize(cores) * sizeof *cfg->cores);
-    const cJSON *d;
-    cJSON_ArrayForEach(d, cores) {
-        ua_core *c = &cfg->cores[cfg->ncores++];
-        memset(c, 0, sizeof *c);
-        if (parse_core(d, c, &ids, path, err, errlen))
-            goto done;
+    /* Game data from one URL each; a key of its own, because copies of
+       updateAll that predate it read this file too, and skip it. */
+    const cJSON *data = cJSON_GetObjectItemCaseSensitive(root, "data");
+    if (data && !cJSON_IsArray(data)) {
+        set_err(err, errlen, "%s: 'data' must be a list", path);
+        goto done;
+    }
+    cfg->cores = xmalloc((size_t)(cJSON_GetArraySize(cores) + cJSON_GetArraySize(data)) *
+                         sizeof *cfg->cores);
+    for (int is_data = 0; is_data < 2; is_data++) {
+        const cJSON *list = is_data ? data : cores, *d;
+        cJSON_ArrayForEach(d, list) {
+            ua_core *c = &cfg->cores[cfg->ncores++];
+            memset(c, 0, sizeof *c);
+            if (parse_core(d, is_data, c, &ids, path, err, errlen))
+                goto done;
+        }
     }
 
     const cJSON *list = cJSON_GetObjectItemCaseSensitive(root, "databases");
@@ -538,6 +681,8 @@ void ua_config_free(ua_config *cfg)
         for (int k = 0; k < c->nfiles; k++)
             free(c->files[k].name);
         free(c->files);
+        free(c->url);
+        free_list(c->archives);
     }
     free(cfg->cores);
     free_list(cfg->databases);
@@ -947,7 +1092,8 @@ static int sleep_unless_cancelled(const ua_hooks *h, int ms)
 }
 
 /* download(); returns the number of bytes, or -1 with *reason set. */
-static long long download(const db_hit *hit, const char *dest, const ua_hooks *h, char **reason)
+static long long download(const db_hit *hit, const char *dest, int need_zip, const ua_hooks *h,
+                          char **reason)
 {
     char *tmp = fmt("%s.part", dest);
     char *why = xstrdup("no attempt made");
@@ -992,7 +1138,7 @@ static long long download(const db_hit *hit, const char *dest, const ua_hooks *h
                               hit->size_text);
                 else if (hit->md5 && !ieq(md5, hit->md5))
                     why = xstrdup("the MD5 does not match the database");
-                else if (!is_zip_file(tmp))
+                else if (need_zip && !is_zip_file(tmp))
                     why = xstrdup("the file received is not a zip");
                 else if (ua_replace(tmp, dest))
                     why = xstrdup(ua_last_error());
@@ -1013,10 +1159,17 @@ static long long download(const db_hit *hit, const char *dest, const ua_hooks *h
     return result;
 }
 
-/* fetch_missing_zips(); returns whether a dry run would have downloaded. */
+static char *uf2_note(const char *name, uint32_t address, int dry_run)
+{
+    return fmt("%s %s to a UF2 image at 0x%08X", dry_run ? "would convert" : "converted", name,
+               (unsigned)address);
+}
+
+/* fetch_missing_zips(): from the databases, or from the core's own URL when
+   url_downloads is set; returns whether a dry run would have downloaded. */
 static int fetch_missing_zips(const ua_core *core, const char *zip_dir, strv *listing,
-                              databases *dbs, int dry_run, strv *notes, strv *errors,
-                              const ua_hooks *h)
+                              databases *dbs, int dry_run, int url_downloads, strv *notes,
+                              strv *errors, const ua_hooks *h)
 {
     int pending = 0;
     for (int z = 0; z < core->nzips; z++) {
@@ -1026,17 +1179,30 @@ static int fetch_missing_zips(const ua_core *core, const char *zip_dir, strv *li
             have = ieq(listing->v[i], zname);
         if (have)
             continue;
-        db_hit hit;
-        if (!databases_find(dbs, zname, &hit))
-            continue;
+        db_hit hit = { 0 };
+        char *source;
+        if (core->url) {
+            if (!url_downloads)
+                continue;
+            hit.url = xstrdup(core->url);
+            source = url_host(core->url);
+        } else {
+            if (!databases_find(dbs, zname, &hit))
+                continue;
+            source = xstrdup(hit.db->id);
+        }
         if (dry_run) {
-            strv_push(notes, fmt("would download %s from %s", zname, hit.db->id));
+            strv_push(notes, fmt("would download %s from %s", zname, source));
+            if (core->uf2)
+                strv_push(notes, uf2_note(zname, core->uf2_address, dry_run));
             pending = 1;
             hit_free(&hit);
+            free(source);
             continue;
         }
         if (is_cancelled(h)) {
             hit_free(&hit);
+            free(source);
             break;
         }
         char *why = NULL;
@@ -1045,18 +1211,19 @@ static int fetch_missing_zips(const ua_core *core, const char *zip_dir, strv *li
             why = xstrdup(ua_last_error());
         } else {
             char *dest = path_join(zip_dir, zname);
-            got = download(&hit, dest, h, &why);
+            got = download(&hit, dest, !core->url, h, &why);
             free(dest);
         }
         if (got < 0) {
-            strv_push(errors, fmt("download of %s from %s failed: %s", zname, hit.db->id, why));
+            strv_push(errors, fmt("download of %s from %s failed: %s", zname, source, why));
             free(why);
         } else {
             strv_push(listing, xstrdup(zname));
             strv_push(notes, fmt("downloaded %s (%" PRId64 " KB) from %s", zname,
-                                 (int64_t)((got + 1023) / 1024), hit.db->id));
+                                 (int64_t)((got + 1023) / 1024), source));
         }
         hit_free(&hit);
+        free(source);
     }
     return pending;
 }
@@ -1100,12 +1267,22 @@ static char *dest_dir(const ua_core *core, const char *sd_root)
     return p;
 }
 
+/* os.path.join(dest, *name.split("/")): game data may sit in subfolders. */
+static char *file_target(const char *dest, const char *name)
+{
+    char *t = path_join(dest, name);
+    for (char *p = t + strlen(dest); *p; p++)
+        if (*p == '/')
+            *p = UA_SEP;
+    return t;
+}
+
 int ua_count_current(const ua_core *core, const char *sd_root)
 {
     char *dest = dest_dir(core, sd_root);
     int n = 0;
     for (int i = 0; i < core->nfiles; i++) {
-        char *target = path_join(dest, core->files[i].name);
+        char *target = file_target(dest, core->files[i].name);
         n += is_current(target, core->files[i].size, core->files[i].crc);
         free(target);
     }
@@ -1132,10 +1309,57 @@ static int rank(const zip_entry *e, const char *wanted)
 
 typedef struct {
     int written, current;
-    strv missing, errors;
+    strv missing, errors, notes;
     char *skipped;
     strv used;
 } result;
+
+/* One place to search for files: a zip, a zip inside one, or game data that
+   is not a zip at all and stands for itself (PlainFile in updateAll.py). */
+typedef struct {
+    mz_zip_archive za;
+    int opened;     /* za is open */
+    void *mem;      /* the bytes of a zip inside a zip, kept while za is open */
+    unsigned char *plain;   /* a plain file's bytes, or its UF2 image; or NULL */
+    size_t plain_size;
+    uint32_t plain_crc;
+    char *label;    /* "x.zip", or "x.zip:INNER.ZIP", as messages name it */
+} archive;
+
+static void put32(unsigned char *p, uint32_t v)
+{
+    p[0] = (unsigned char)v;
+    p[1] = (unsigned char)(v >> 8);
+    p[2] = (unsigned char)(v >> 16);
+    p[3] = (unsigned char)(v >> 24);
+}
+
+/* to_uf2(): data as a UF2 image at address with this family ID, as picotool's
+   "uf2 convert -t bin" writes it: 256 bytes in each 512-byte block, the last
+   one padded with zeros. The progress goes to on_bytes, as for a download. */
+static unsigned char *to_uf2(const unsigned char *data, size_t len, uint32_t address,
+                             uint32_t family, size_t *out_len, const ua_hooks *h)
+{
+    size_t n = (len + 255) / 256;
+    unsigned char *out = xmalloc(n * 512);
+    memset(out, 0, n * 512);
+    for (size_t i = 0; i < n; i++) {
+        if (h->on_bytes && i % 64 == 0)
+            h->on_bytes(h->ctx, (long long)(i * 512), (long long)(n * 512));
+        unsigned char *b = out + i * 512;
+        const uint32_t head[8] = { 0x0A324655, 0x9E5D5157, 0x00002000,
+                                   address + (uint32_t)(256 * i), 256, (uint32_t)i,
+                                   (uint32_t)n, family };
+        for (int k = 0; k < 8; k++)
+            put32(b + 4 * k, head[k]);
+        memcpy(b + 32, data + 256 * i, len - 256 * i < 256 ? len - 256 * i : 256);
+        put32(b + 508, 0x0AB16F30);
+    }
+    if (h->on_bytes)
+        h->on_bytes(h->ctx, (long long)(n * 512), (long long)(n * 512));
+    *out_len = n * 512;
+    return out;
+}
 
 static char *open_error(mz_zip_archive *za, const char *path)
 {
@@ -1160,10 +1384,12 @@ static char *extract_error(mz_zip_archive *za, const char *name)
     }
 }
 
-static int write_file(const char *dest, const char *target, const void *data, size_t len,
-                      char **why)
+static int write_file(const char *target, const void *data, size_t len, char **why)
 {
-    if (ua_mkdirs(dest)) {
+    char *dir = fmt("%.*s", (int)(base_name(target) - target - 1), target);
+    int mk = ua_mkdirs(dir);
+    free(dir);
+    if (mk) {
         *why = xstrdup(ua_last_error());
         return -1;
     }
@@ -1191,6 +1417,93 @@ static int write_file(const char *dest, const char *target, const void *data, si
     return rc;
 }
 
+/* open_archives(): the zip at path, or the file alone when game data is not a
+   zip or is to become a UF2 image, plus the zips inside it that the core names
+   in "archives". They are appended to *arcs; problems go to res->errors, and a
+   conversion to res->notes. */
+static void open_archives(const ua_core *core, const char *path, const char *name,
+                          archive **arcs, int *narcs, int *cap, int dry_run, result *res,
+                          const ua_hooks *h)
+{
+    if (*narcs + 1 + core->narchives > *cap) {
+        *cap = *narcs + 1 + core->narchives + 8;
+        *arcs = xrealloc(*arcs, (size_t)*cap * sizeof **arcs);
+    }
+    archive *a = &(*arcs)[*narcs];
+    memset(a, 0, sizeof *a);
+    a->label = xstrdup(name);
+    if (core->url && (core->uf2 || !is_zip_file(path))) {
+        char *data, *why;
+        size_t len;
+        if (read_file(path, &data, &len, &why)) {
+            strv_push(&res->errors, fmt("cannot open %s: %s", name, why));
+            free(why);
+            free(a->label);
+            return;
+        }
+        if (core->uf2) {
+            a->plain = to_uf2((unsigned char *)data, len, core->uf2_address, core->uf2_family,
+                              &a->plain_size, h);
+            free(data);
+            strv_push(&res->notes, uf2_note(name, core->uf2_address, dry_run));
+        } else {
+            a->plain = (unsigned char *)data;
+            a->plain_size = len;
+        }
+        a->plain_crc = (uint32_t)mz_crc32(MZ_CRC32_INIT, a->plain, a->plain_size);
+        (*narcs)++;
+        return;
+    }
+    mz_zip_zero_struct(&a->za);
+    errno = 0;
+    if (!mz_zip_reader_init_file(&a->za, path, 0)) {
+        char *why = open_error(&a->za, path);
+        strv_push(&res->errors, fmt("cannot open %s: %s", name, why));
+        free(why);
+        free(a->label);
+        return;
+    }
+    a->opened = 1;
+    (*narcs)++;
+    mz_zip_archive *outer = &a->za;
+
+    for (int k = 0; k < core->narchives; k++) {
+        const char *inner = core->archives[k];
+        mz_uint n = mz_zip_reader_get_num_files(outer), found = n;
+        mz_zip_archive_file_stat st;
+        for (mz_uint i = 0; i < n && found == n; i++)
+            if (mz_zip_reader_file_stat(outer, i, &st) && ieq(base_name(st.m_filename), inner))
+                found = i;
+        if (found == n) {
+            strv_push(&res->errors, fmt("%s holds no %s", name, inner));
+            continue;
+        }
+        char *label = fmt("%s:%s", name, st.m_filename);
+        size_t len = 0;
+        void *mem = mz_zip_reader_extract_to_heap(outer, found, &len, 0);
+        archive *b = &(*arcs)[*narcs];
+        memset(b, 0, sizeof *b);
+        mz_zip_zero_struct(&b->za);
+        if (!mem) {
+            char *why = extract_error(outer, st.m_filename);
+            strv_push(&res->errors, fmt("cannot open %s: %s", label, why));
+            free(why);
+            free(label);
+            continue;
+        }
+        if (!mz_zip_reader_init_mem(&b->za, mem, len, 0)) {
+            strv_push(&res->errors, fmt("cannot open %s: File is not a zip file", label));
+            mz_free(mem);
+            free(label);
+            continue;
+        }
+        b->opened = 1;
+        b->mem = mem;
+        b->label = label;
+        (*narcs)++;
+    }
+}
+
 static void install_core(const ua_core *core, const char *zip_dir, const strv *listing,
                          const char *sd_root, int dry_run, result *res, const ua_hooks *h)
 {
@@ -1212,33 +1525,34 @@ static void install_core(const ua_core *core, const char *zip_dir, const strv *l
         return;
     }
 
-    mz_zip_archive *archives = xmalloc((size_t)paths.n * sizeof *archives);
-    int *opened = xmalloc((size_t)paths.n * sizeof *opened);
+    archive *arcs = NULL;
+    int narcs = 0, acap = 0;
+    for (int i = 0; i < paths.n; i++)
+        open_archives(core, paths.v[i], res->used.v[i], &arcs, &narcs, &acap, dry_run, res, h);
+
     zip_entry *entries = NULL;
     int nentries = 0, cap = 0;
-    for (int a = 0; a < paths.n; a++) {
-        mz_zip_zero_struct(&archives[a]);
-        errno = 0;
-        opened[a] = mz_zip_reader_init_file(&archives[a], paths.v[a], 0);
-        if (!opened[a]) {
-            char *why = open_error(&archives[a], paths.v[a]);
-            strv_push(&res->errors, fmt("cannot open %s: %s", base_name(paths.v[a]), why));
-            free(why);
-            continue;
-        }
-        mz_uint n = mz_zip_reader_get_num_files(&archives[a]);
+    for (int a = 0; a < narcs; a++) {
+        mz_uint n = arcs[a].plain ? 1 : mz_zip_reader_get_num_files(&arcs[a].za);
         for (mz_uint i = 0; i < n; i++) {
             mz_zip_archive_file_stat st;
-            if (!mz_zip_reader_file_stat(&archives[a], i, &st) || st.m_is_directory)
-                continue;
             if (nentries == cap)
                 entries = xrealloc(entries, (size_t)(cap = cap ? cap * 2 : 64) * sizeof *entries);
-            zip_entry *e = &entries[nentries++];
+            zip_entry *e = &entries[nentries];
+            if (arcs[a].plain) {
+                e->size = (long long)arcs[a].plain_size;
+                e->crc = arcs[a].plain_crc;
+                e->name = xstrdup(arcs[a].label);
+            } else {
+                if (!mz_zip_reader_file_stat(&arcs[a].za, i, &st) || st.m_is_directory)
+                    continue;
+                e->size = (long long)st.m_uncomp_size;
+                e->crc = st.m_crc32;
+                e->name = xstrdup(st.m_filename);
+            }
+            nentries++;
             e->arch = a;
             e->index = i;
-            e->size = (long long)st.m_uncomp_size;
-            e->crc = st.m_crc32;
-            e->name = xstrdup(st.m_filename);
             e->in_subfolder = strchr(e->name, '/') || strchr(e->name, '\\');
             e->base = e->name;
             for (const char *s = e->name; *s; s++)
@@ -1250,7 +1564,8 @@ static void install_core(const ua_core *core, const char *zip_dir, const strv *l
     char *dest = dest_dir(core, sd_root);
     for (int i = 0; i < core->nfiles && !is_cancelled(h); i++) {
         const ua_file *f = &core->files[i];
-        char *target = path_join(dest, f->name);
+        const char *wanted = base_name(f->name);
+        char *target = file_target(dest, f->name);
         if (is_current(target, f->size, f->crc)) {
             res->current++;
             free(target);
@@ -1261,42 +1576,55 @@ static void install_core(const ua_core *core, const char *zip_dir, const strv *l
         for (int k = 0; k < nentries; k++) {
             const zip_entry *e = &entries[k];
             if (e->size == f->size && e->crc == f->crc &&
-                (!best || rank(e, f->name) < rank(best, f->name)))
+                (!best || rank(e, wanted) < rank(best, wanted)))
                 best = e;
-            if (ieq(e->base, f->name) && (!same_name || rank(e, f->name) < rank(same_name, f->name)))
+            if (ieq(e->base, wanted) && (!same_name || rank(e, wanted) < rank(same_name, wanted)))
                 same_name = e;
         }
         if (!best) {
-            if (same_name)
+            if (core->uf2 && narcs)
+                strv_push(&res->errors, fmt("the UF2 image of %s is not the expected file "
+                                            "(damaged, or from a different version)",
+                                            arcs[0].label));
+            else if (same_name)
                 strv_push(&res->errors, fmt("%s:%s is not the expected file (damaged, or from a "
                                             "different version of the set)",
-                                            res->used.v[same_name->arch], same_name->name));
+                                            arcs[same_name->arch].label, same_name->name));
             else
                 strv_push(&res->missing, xstrdup(f->name));
             free(target);
             continue;
         }
-        char *source = fmt("%s:%s", res->used.v[best->arch], best->name);
+        archive *a = &arcs[best->arch];
+        char *source = fmt("%s:%s", a->label, best->name);
 
         if (dry_run) {
             res->written++;
         } else {
             size_t len = 0;
-            void *data = mz_zip_reader_extract_to_heap(&archives[best->arch], best->index, &len, 0);
+            void *data = NULL;
             char *why = NULL;
+            if (a->plain) {
+                data = a->plain;
+                len = a->plain_size;
+            } else {
+                data = mz_zip_reader_extract_to_heap(&a->za, best->index, &len, 0);
+                if (!data)
+                    why = extract_error(&a->za, best->name);
+            }
             if (!data) {
-                why = extract_error(&archives[best->arch], best->name);
                 strv_push(&res->errors, fmt("%s: %s", source, why));
             } else if ((long long)len != f->size ||
                        (uint32_t)mz_crc32(MZ_CRC32_INIT, data, len) != f->crc) {
                 strv_push(&res->errors, fmt("%s: contents do not match the size and CRC", source));
-            } else if (write_file(dest, target, data, len, &why)) {
+            } else if (write_file(target, data, len, &why)) {
                 strv_push(&res->errors, fmt("cannot write %s: %s", target, why));
             } else {
                 res->written++;
             }
             free(why);
-            mz_free(data);
+            if (!a->plain)
+                mz_free(data);
         }
         free(source);
         free(target);
@@ -1306,11 +1634,14 @@ static void install_core(const ua_core *core, const char *zip_dir, const strv *l
     for (int k = 0; k < nentries; k++)
         free(entries[k].name);
     free(entries);
-    for (int a = 0; a < paths.n; a++)
-        if (opened[a])
-            mz_zip_reader_end(&archives[a]);
-    free(opened);
-    free(archives);
+    for (int a = 0; a < narcs; a++) {
+        if (arcs[a].opened)
+            mz_zip_reader_end(&arcs[a].za);
+        mz_free(arcs[a].mem);
+        free(arcs[a].plain);
+        free(arcs[a].label);
+    }
+    free(arcs);
     strv_free(&paths);
 }
 
@@ -1318,6 +1649,7 @@ static void result_free(result *r)
 {
     strv_free(&r->missing);
     strv_free(&r->errors);
+    strv_free(&r->notes);
     strv_free(&r->used);
     free(r->skipped);
 }
@@ -1327,7 +1659,8 @@ static void result_free(result *r)
 /* ------------------------------------------------------------------------- */
 
 static int run(const ua_core **cores, int ncores, int requested, int dry_run,
-               const char *sd, const char *zip_dir, databases *dbs, const ua_hooks *h)
+               const char *sd, const char *zip_dir, databases *dbs, int url_downloads,
+               const ua_hooks *h)
 {
     strv listing = { 0 };
     if (ua_is_dir(zip_dir)) {
@@ -1356,7 +1689,8 @@ static int run(const ua_core **cores, int ncores, int requested, int dry_run,
         }
 
         strv notes = { 0 }, errors = { 0 };
-        int pending = fetch_missing_zips(core, zip_dir, &listing, dbs, dry_run, &notes, &errors, h);
+        int pending = fetch_missing_zips(core, zip_dir, &listing, dbs, dry_run, url_downloads,
+                                         &notes, &errors, h);
         result res;
         install_core(core, zip_dir, &listing, sd, dry_run, &res, h);
         for (int i = 0; i < res.errors.n; i++)
@@ -1366,7 +1700,7 @@ static int run(const ua_core **cores, int ncores, int requested, int dry_run,
         if (res.skipped && !pending && !dl_errors) {
             skipped++;
             out(h, "%s: skipped, %s%s", core->name, res.skipped,
-                dbs->nloaded ? ", and not in any database" : "");
+                dbs->nloaded && !core->url ? ", and not in any database" : "");
         } else {
             char *used = res.used.n ? strv_join(res.used.v, res.used.n, ", ")
                                     : strv_join(core->zips, core->nzips, ", ");
@@ -1374,6 +1708,8 @@ static int run(const ua_core **cores, int ncores, int requested, int dry_run,
             free(used);
             for (int i = 0; i < notes.n; i++)
                 out(h, "  %s", notes.v[i]);
+            for (int i = 0; i < res.notes.n; i++)
+                out(h, "  %s", res.notes.v[i]);
             if (res.skipped) {
                 for (int i = 0; i < errors.n; i++)
                     out(h, "  ERROR: %s", errors.v[i]);
@@ -1444,7 +1780,12 @@ int ua_run(const ua_config *cfg, const ua_options *opt, const ua_hooks *h)
         out_err(h, "ERROR: SD card root not found: %s", opt->sd ? opt->sd : "");
         goto done;
     }
-    int may_download = sources.n > 0 && !opt->no_download;
+    /* Game data has its own URL, so it can be downloaded without a database. */
+    int use_databases = sources.n > 0 && !opt->no_download;
+    int url_downloads = !opt->no_download, any_url = 0;
+    for (int i = 0; i < cfg->ncores; i++)
+        any_url |= cfg->cores[i].url != NULL;
+    int may_download = use_databases || (url_downloads && any_url);
     const char *zips = opt->zips && *opt->zips ? opt->zips : NULL;
     if (!zips && !may_download) {
         out_err(h, "ERROR: nothing to install from: give a zip folder with --zips, "
@@ -1503,7 +1844,7 @@ int ua_run(const ua_config *cfg, const ua_options *opt, const ua_hooks *h)
     abs = ua_abspath(opt->sd);
     out(h, "SD card:      %s", abs);
     free(abs);
-    if (may_download)
+    if (use_databases)
         out(h, "Databases:    %d, used for zips that are not in the zip folder", sources.n);
     if (opt->dry_run)
         out(h, "Dry run:      nothing is downloaded or written");
@@ -1516,10 +1857,11 @@ int ua_run(const ua_config *cfg, const ua_options *opt, const ua_hooks *h)
         goto done;
     }
     databases dbs = { 0 };
-    dbs.sources = may_download ? sources.v : NULL;
-    dbs.nsources = may_download ? sources.n : 0;
+    dbs.sources = use_databases ? sources.v : NULL;
+    dbs.nsources = use_databases ? sources.n : 0;
     dbs.h = h;
-    rc = run(cores, ncores, requested, opt->dry_run, opt->sd, zips ? zips : temp_dir, &dbs, h);
+    rc = run(cores, ncores, requested, opt->dry_run, opt->sd, zips ? zips : temp_dir, &dbs,
+             url_downloads, h);
     databases_free(&dbs);
 
 done:

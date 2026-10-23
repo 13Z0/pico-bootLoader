@@ -46,7 +46,7 @@ typedef enum {
 
 typedef struct {
     bool              valid;
-    char              filename[FLASH_RECORD_NAME_MAX];  /* basename in the config dir */
+    char              filename[FLASH_RECORD_NAME_MAX];  /* basename; an aux may sit in /roms */
     uint32_t          fsize;
     uint16_t          fdate;
     uint16_t          ftime;

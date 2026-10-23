@@ -7,7 +7,9 @@
 #   image_key     menu artwork basename: assets/themes/n/<image_key>.png|.jpg
 #   display_name  label shown in the picker
 #   aux_uf2       optional companion data .uf2 (UF2 family RP2350 DATA),
-#                 flashed alongside the app (e.g. Doom's WAD)
+#                 flashed alongside the app (e.g. Doom's WAD). Its path is
+#                 relative to /roms; the loader looks there first, then for
+#                 the same file name next to the app in /emu/<HW_CONFIG>/
 #
 # Applications are shown in the order they appear below.
 #
@@ -41,6 +43,7 @@ colecojam;col;ColecoVision
 PicoPeanutGB;gb_gbc;Nintendo Game Boy/Game Boy Color
 
 # --- Ports ---
-doom_tiny;doom;Doom!;doom1-whx.uf2
+doom_tiny;doom;Doom!;doom/doom1-whx-bootloader.uf2
 doom_tiny_full;doom_full;Doom Full!
 duke3d_game;duke3d;Duke Nukem 3D
+pico-quake2;quake2;Quake II

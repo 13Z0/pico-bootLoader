@@ -10,7 +10,9 @@
 # Archive layout (matches boot.txt's BASEDIR=/emu; emu/, updateAll/ and ld2pico/
 # sit at the archive root, so unzipping at the root of the card is all a user has
 # to do):
-#   emu/<HW_CONFIG>/<prog_name>.uf2      plus any aux (WAD) UF2s alongside
+#   emu/<HW_CONFIG>/<prog_name>.uf2      (no aux data UF2s: updateAll makes Doom's
+#                                        WAD image from pico-doom's doom1.whx, in
+#                                        /roms/doom/)
 #   emu/emulators.txt
 #   emu/categories.txt                   (if present, with the config files it names)
 #   emu/boot.example.txt
@@ -19,8 +21,8 @@
 #                                        for a key that has no cache to ship)
 #   emu/assets/themes/<0-9>/Categories/<image_key>.{444,555}
 #   emu/assets/screensaver/<sprite>.{444,555}
-#   updateAll/updateAll.exe              the arcade ROM installer for Windows,
-#                                        built by updateAll/win/build.sh
+#   updateAll/updateAll.exe              the arcade ROM and game data installer for
+#                                        Windows, built by updateAll/win/build.sh
 #   updateAll/updateAll.{json,py,ps1}    its sets, and the same installer as scripts
 #   updateAll/README.md
 #   ld2pico/ld2pico.exe                  the Dragon's Lair laserdisc converter for
@@ -118,17 +120,17 @@ else
     warn "emu/versions.txt not found — the archive will not record emulator versions"
 fi
 
-# --- Parse the index: prog -> aux_uf2, plus the artwork keys ------------------
+# --- Parse the index: program names, plus the artwork keys -------------------
 # Format: <program_name>;<image_key>;<display_name>[;<aux_uf2>]
+# The aux_uf2 column is not packed: that data file belongs in /roms, where
+# updateAll installs it.
 PROG_NAMES=()
 IMAGE_KEYS=()
-declare -A AUX_OF=()
 declare -A SEEN_KEY=()
-while IFS=';' read -r prog img _name aux || [ -n "${prog:-}" ]; do
+while IFS=';' read -r prog img _rest || [ -n "${prog:-}" ]; do
     [ -z "${prog:-}" ] && continue
     [[ "$prog" == \#* ]] && continue
     PROG_NAMES+=("$prog")
-    AUX_OF[$prog]="$(printf '%s' "${aux:-}" | tr -d '[:space:]')"
     img="$(printf '%s' "${img:-}" | tr -d '[:space:]')"
     if [ -n "$img" ] && [ -z "${SEEN_KEY[$img]+x}" ]; then
         SEEN_KEY[$img]=1
@@ -218,20 +220,6 @@ for hwdir in "$LOADER/emu/"[0-9] "$LOADER/emu/"[0-9][0-9]; do
         echo "  pack HW=$hw $prog.uf2"
         packed=$((packed + 1))
         have_any=1
-
-        # Companion DATA-family UF2 (Doom's WAD): the loader derives its path
-        # from column 4 of emulators.txt and expects it next to the app.
-        aux="${AUX_OF[$prog]:-}"
-        if [ -n "$aux" ]; then
-            if [ -s "$hwdir/$aux" ]; then
-                cp "$hwdir/$aux" "$DEST/$hw/$aux"
-                echo "  pack HW=$hw $aux  (aux for $prog)"
-                packed=$((packed + 1))
-            else
-                warn "HW=$hw $prog declares aux '$aux' in emulators.txt but $hwdir/$aux is missing or empty — the loader will launch without flashing it"
-                missing=$((missing + 1))
-            fi
-        fi
     done
     (( have_any )) && boards=$((boards + 1))
 done
@@ -349,7 +337,8 @@ fi
 echo "  pack $ss_count screensaver sprite(s)"
 
 # --- updateAll ---------------------------------------------------------------
-# The arcade ROM installer travels with the card, in updateAll/ next to emu/:
+# The arcade ROM and game data installer travels with the card, in updateAll/
+# next to emu/:
 # updateAll.exe for Windows, and the equivalent scripts for everything else.
 UA_SRC="$LOADER/updateAll"
 if [ -d "$UA_SRC" ]; then

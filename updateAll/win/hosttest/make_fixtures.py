@@ -230,6 +230,116 @@ for name, url in (("fetch", remote_cfg), ("fetch404", f"{URL}/no-such-cfg.json")
         json.dump({"config_url": url, "cores": local}, f, indent=2)
 
 # ---------------------------------------------------------------------------
+# Game data: one URL per entry, a zip or a plain file
+# ---------------------------------------------------------------------------
+
+
+def data_entry(did, url, dest, files, archives=None, uf2=None):
+    entry = {"id": did, "name": did.capitalize() + " data", "set": f"test data {did}",
+             "url": url, "destination": dest,
+             "files": [{"name": k, "size": len(v), "crc": crc(v)} for k, v in files.items()]}
+    if archives is not None:
+        entry["archives"] = archives
+    if uf2 is not None:
+        entry["uf2"] = uf2
+    return entry
+
+
+def uf2_image(data, address, family):
+    """The UF2 file picotool's "uf2 convert -t bin -o <address> --family <family>"
+    writes (checked against picotool with doom1.whx): 512-byte blocks of 256 data
+    bytes, zero-filled."""
+    blocks = -(-len(data) // 256)
+    image = bytearray(512 * blocks)
+    for n in range(blocks):
+        struct.pack_into("<IIIIIIII", image, 512 * n, 0x0A324655, 0x9E5D5157, 0x2000,
+                         address + 256 * n, 256, n, blocks, family)
+        image[512 * n + 32:512 * n + 32 + 256] = data[256 * n:256 * n + 256].ljust(256, b"\0")
+        struct.pack_into("<I", image, 512 * n + 508, 0x0AB16F30)
+    return bytes(image)
+
+
+def sfx_bytes(entries):
+    """A self-extracting archive: an exe stub, then a zip whose offsets count
+    from the start of the file, as in the Duke Nukem 3D shareware package."""
+    import io
+    buf = io.BytesIO()
+    buf.write(b"MZ" + blob(3000))
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, data in entries:
+            zf.writestr(name, data)
+    data = buf.getvalue()
+    eocd = data.rfind(b"PK\x05\x06")
+    cd_size, cd_offset = struct.unpack("<II", data[eocd + 12:eocd + 20])
+    assert cd_offset == eocd - cd_size, "offsets must be absolute"
+    return data
+
+
+game = []
+
+# A plain file, kept in the zip folder under its URL's (unquoted) name and
+# installed under another one.
+rho = {"rho.uf2": blob(3000)}
+serve("data/rho file.uf2", rho["rho.uf2"])
+game.append(data_entry("rho", f"{URL}/data/rho%20file.uf2", "/roms/RHO", rho))
+
+# A zip whose files go into subfolders of the destination; one file of the zip
+# is not wanted. The URL has a query.
+sigma = {"base/s1": blob(2000), "base/sub/s2": blob(2001), "readme.txt": b"sigma readme"}
+data = zip_bytes([("roms/sigma/base/s1", sigma["base/s1"]),
+                  ("roms/sigma/base/sub/s2", sigma["base/sub/s2"]),
+                  ("roms/sigma/readme.txt", sigma["readme.txt"]),
+                  ("unwanted.txt", b"not installed")])
+game.append(data_entry("sigma", serve("data/sigma.zip", data) + "?download=1", "/roms/SIGMA",
+                       sigma))
+make_zip("zips_data/sigma.zip", [(f"roms/sigma/{k}", v) for k, v in sigma.items()])
+write("zips_data/rho file.uf2", rho["rho.uf2"])
+
+# A zip holding a self-extracting archive that holds the data; the licence is
+# in both.
+tau = {"TAU.GRP": blob(5000), "LICENSE.TXT": b"tau licence"}
+inner = sfx_bytes(list(tau.items()))
+data = zip_bytes([("LICENSE.TXT", tau["LICENSE.TXT"]), ("INSTALL.EXE", blob(500)),
+                  ("TAU.SHR", inner)])
+game.append(data_entry("tau", serve("data/tau13.zip", data), "/roms/TAU", tau, ["tau.shr"]))
+
+# A plain file installed as a UF2 image, its last block only partly used.
+omega_raw = blob(1000)
+serve("data/omega.whx", omega_raw)
+game.append(data_entry("omega", f"{URL}/data/omega.whx", "/roms/OMEGA",
+                       {"omega.uf2": uf2_image(omega_raw, 0x10200000, 0xE48BFF58)},
+                       uf2={"address": "0x10200000", "family": "e48bff58"}))
+write("zips_data/omega.whx", omega_raw)
+
+# The same file, but the image the configuration expects is at another address.
+serve("data/omegabad.whx", omega_raw)
+game.append(data_entry("omegabad", f"{URL}/data/omegabad.whx", "/roms/OMEGABAD",
+                       {"omega.uf2": uf2_image(omega_raw, 0x10400000, 0xE48BFF58)},
+                       uf2={"address": "0x10200000", "family": "e48bff58"}))
+
+# Not found; a plain file with other contents; a zip without the named
+# archive; and a named archive that is not a zip.
+game.append(data_entry("upsilon", f"{URL}/data/missing/upsilon.uf2", "/roms/UPSILON",
+                       {"upsilon.uf2": blob(100)}))
+phi = {"phi.bin": blob(100)}
+serve("data/phi.bin", blob(100))
+game.append(data_entry("phi", f"{URL}/data/phi.bin", "/roms/PHI", phi))
+chi = {"CHI.GRP": blob(100)}
+serve("data/chi.zip", zip_bytes([("CHI.GRP.txt", b"x")]))
+game.append(data_entry("chi", f"{URL}/data/chi.zip", "/roms/CHI", chi, ["CHI.SHR"]))
+psi = {"PSI.GRP": blob(100)}
+serve("data/psi.zip", zip_bytes([("sub/PSI.SHR", b"MZ not a zip")]))
+game.append(data_entry("psi", f"{URL}/data/psi.zip", "/roms/PSI", psi, ["psi.shr"]))
+
+with open(os.path.join(OUT, "cfg_data.json"), "w") as f:
+    json.dump({"databases": [f"{URL}/db.json.zip"], "cores": [remote[0]], "data": game}, f,
+              indent=2)
+
+# A card on which part of sigma is already right and one file is wrong.
+write("card_data_partial/roms/SIGMA/base/s1", sigma["base/s1"])
+write("card_data_partial/roms/SIGMA/readme.txt", b"edited")
+
+# ---------------------------------------------------------------------------
 # Invalid configurations
 # ---------------------------------------------------------------------------
 
@@ -255,3 +365,19 @@ bad("size", {"cores": [dict(good, files=[{"name": "x", "size": "big", "crc": "0"
 bad("databases", {"databases": "http://x", "cores": [good]})
 bad("config_url", {"config_url": "ftp://x/updateAll.json", "cores": [good]})
 bad("config_url_type", {"config_url": ["http://x"], "cores": [good]})
+
+good_data = data_entry("d", "http://x/d.zip", "/roms/D", {"base/d1": b"d"})
+bad("data_type", {"cores": [good], "data": {"d": good_data}})
+bad("data_nourl", {"cores": [good], "data": [{k: v for k, v in good_data.items() if k != "url"}]})
+bad("data_url", {"cores": [good], "data": [dict(good_data, url="ftp://x/d.zip")]})
+bad("data_url_name", {"cores": [good], "data": [dict(good_data, url="http://x/dir/")]})
+bad("data_name", {"cores": [good], "data": [dict(good_data, files=[{"name": "a/../b", "size": 1,
+                                                                    "crc": "0"}])]})
+bad("data_archives", {"cores": [good], "data": [dict(good_data, archives=["a/b.zip"])]})
+bad("data_dup_id", {"cores": [good], "data": [dict(good_data, id="OK")]})
+bad("data_slash_in_core", {"cores": [dict(good, files=[{"name": "a/b", "size": 1, "crc": "0"}])]})
+bad("data_uf2", {"cores": [good], "data": [dict(good_data, uf2={"address": "xyz", "family": "0"})]})
+bad("data_uf2_type", {"cores": [good], "data": [dict(good_data, uf2="0x10200000")]})
+bad("data_uf2_nofamily", {"cores": [good], "data": [dict(good_data, uf2={"address": "0x10200000"})]})
+bad("data_uf2_big", {"cores": [good], "data": [dict(good_data, uf2={"address": "100000000",
+                                                                    "family": "0"})]})

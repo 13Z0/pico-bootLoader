@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Installs arcade ROM sets on the SD card.
+    Installs arcade ROM sets and game data on the SD card.
 
 .DESCRIPTION
     Takes MAME ROM zips from one folder, the way MiSTer keeps them in
@@ -8,6 +8,13 @@
     application looks for it. The sets, their zips and their folders are
     defined in updateAll.json next to this script; a new core is added there,
     not here.
+
+    The "data" list of updateAll.json adds the shareware and demo data of the
+    ported games. Each entry is downloaded from its own URL, as a zip or as the
+    one file to install; its files may go into subfolders, and zips inside the
+    download that it names under "archives" are searched as well. An entry
+    with "uf2" turns the downloaded file into a UF2 image for the loader to
+    flash.
 
     A zip that is not in the folder is downloaded into it first, from the
     databases listed in updateAll.json or given with -Database; without -Zips,
@@ -32,8 +39,8 @@
 
 .PARAMETER Zips
     Folder with MAME zips you already have, for example phoenix.zip.
-    Downloaded zips are kept here as well. Default: download into a temporary
-    folder that is removed afterwards.
+    Downloaded zips and game data are kept here as well. Default: download
+    into a temporary folder that is removed afterwards.
 
 .PARAMETER Sd
     Root of the SD card, for example E:\. Any existing folder will do.
@@ -47,7 +54,7 @@
     or files, separated with commas.
 
 .PARAMETER NoDownload
-    Use only the zips already in the zip folder.
+    Use only the files already in the zip folder.
 
 .PARAMETER Config
     Configuration file. Default: updateAll.json next to this script. When it
@@ -150,6 +157,45 @@ namespace UpdateAll
 '@
 }
 
+# A type of its own, so that a session that already holds Crc32 still gets it.
+if (-not ('UpdateAll.Uf2' -as [type])) {
+    Add-Type -TypeDefinition @'
+namespace UpdateAll
+{
+    public static class Uf2
+    {
+        // data as a UF2 image at address with this family ID, as picotool's
+        // "uf2 convert -t bin" writes it: 256 bytes in each 512-byte block,
+        // the last one padded with zeros.
+        public static byte[] FromBinary(byte[] data, uint address, uint family)
+        {
+            int n = (data.Length + 255) / 256;
+            byte[] image = new byte[n * 512];
+            for (int i = 0; i < n; i++)
+            {
+                int at = i * 512;
+                uint[] head = { 0x0A324655u, 0x9E5D5157u, 0x00002000u, unchecked(address + (uint)(256 * i)),
+                                256u, (uint)i, (uint)n, family };
+                for (int k = 0; k < 8; k++)
+                    Put(image, at + 4 * k, head[k]);
+                System.Array.Copy(data, 256 * i, image, at + 32, System.Math.Min(256, data.Length - 256 * i));
+                Put(image, at + 508, 0x0AB16F30u);
+            }
+            return image;
+        }
+
+        static void Put(byte[] b, int at, uint v)
+        {
+            b[at] = (byte)v;
+            b[at + 1] = (byte)(v >> 8);
+            b[at + 2] = (byte)(v >> 16);
+            b[at + 3] = (byte)(v >> 24);
+        }
+    }
+}
+'@
+}
+
 $script:UserAgent = 'updateAll (pico-bootLoader)'
 $script:DownloadAttempts = 3
 $script:TimeoutSec = 60
@@ -188,6 +234,102 @@ function Read-Config([string] $Path) {
     return ConvertFrom-Config $text $Path $configDir
 }
 
+# The name a downloaded file is kept under in the zip folder: the last part of
+# the URL's path, unescaped.
+function Get-UrlFileName([string] $Url) {
+    $path = ($Url -replace '^[^:/?#]+://[^/?#]*', '') -replace '[?#].*$', ''
+    return [Uri]::UnescapeDataString($path.Substring($path.LastIndexOf('/') + 1))
+}
+
+# One entry of "cores", or of "data" when IsData is set.
+function ConvertFrom-Core($d, [bool] $IsData, [string] $Path, [hashtable] $Ids) {
+    $id = [string](Get-Field $d 'id')
+    foreach ($key in 'id', 'name', $(if ($IsData) { 'url' } else { 'zips' }), 'destination', 'files') {
+        if ($null -eq (Get-Field $d $key)) { throw "${Path}: core '$id' has no '$key'" }
+    }
+    if ($Ids.ContainsKey($id)) { throw "${Path}: core '$id' is defined twice" }
+    $Ids[$id] = $true
+
+    $url = $null
+    $archives = @()
+    $uf2 = $null
+    if ($IsData) {
+        # The file is kept in the zip folder under the last part of the URL.
+        $url = Get-Field $d 'url'
+        $zipName = ''
+        if ($url -is [string] -and (Test-Url $url)) { $zipName = Get-UrlFileName $url }
+        if (Test-BadName $zipName) { throw "${Path}: core '$id' has an invalid url '$url'" }
+        # Not Get-Field: returning a list of one unrolls it into its item.
+        $p = $d.PSObject.Properties['archives']
+        if ($p) {
+            $archives = $p.Value
+            if ($archives -isnot [array] -or
+                    @($archives | Where-Object { $_ -isnot [string] -or (Test-BadName $_) }).Count -gt 0) {
+                throw "${Path}: core '$id' has an invalid archive name"
+            }
+        }
+        $p = $d.PSObject.Properties['uf2']
+        if ($p -and $null -ne $p.Value) {
+            try {
+                $uf2 = [pscustomobject]@{
+                    Address = [Convert]::ToUInt32([string](Get-Field $p.Value 'address'), 16)
+                    Family  = [Convert]::ToUInt32([string](Get-Field $p.Value 'family'), 16)
+                }
+            } catch {
+                throw "${Path}: core '$id' needs a hexadecimal 'address' and 'family' in 'uf2'"
+            }
+        }
+    }
+
+    $dest = ([string](Get-Field $d 'destination')).Replace('\', '/').Trim('/')
+    $parts = @($dest.Split('/'))
+    if (-not $dest -or @($parts | Where-Object { Test-BadName $_ }).Count -gt 0) {
+        throw "${Path}: core '$id' has an invalid destination '$(Get-Field $d 'destination')'"
+    }
+
+    if ($IsData) { $zipNames = @($zipName) } else { $zipNames = @(Get-Field $d 'zips') }
+    $fileDefs = @(Get-Field $d 'files')
+    if ($zipNames.Count -eq 0 -or $fileDefs.Count -eq 0) {
+        throw "${Path}: core '$id' needs at least one zip and one file"
+    }
+    if (@($zipNames | Where-Object { Test-BadName $_ }).Count -gt 0) {
+        throw "${Path}: core '$id' has an invalid zip name"
+    }
+    $files = foreach ($f in $fileDefs) {
+        $name = [string](Get-Field $f 'name')
+        # Game data may go into subfolders of its destination; ROM sets may
+        # not, as older copies of updateAll would reject that.
+        if ($IsData) { $nameParts = @($name.Split('/')) } else { $nameParts = @($name) }
+        if (@($nameParts | Where-Object { Test-BadName $_ }).Count -gt 0) {
+            throw "${Path}: core '$id' has an invalid file name '$name'"
+        }
+        $size = Get-Field $f 'size'
+        $crcText = [string](Get-Field $f 'crc')
+        if ($null -eq $size -or $size -isnot [ValueType] -or -not $crcText) {
+            throw "${Path}: core '$id', file '$name' needs a numeric 'size' and a hexadecimal 'crc'"
+        }
+        try {
+            $crc = [Convert]::ToUInt32($crcText, 16)
+        } catch {
+            throw "${Path}: core '$id', file '$name' needs a numeric 'size' and a hexadecimal 'crc'"
+        }
+        [pscustomobject]@{ Name = $name; Size = [long]$size; Crc = $crc }
+    }
+
+    return [pscustomobject]@{
+        Id        = $id
+        Name      = [string](Get-Field $d 'name')
+        Set       = [string](Get-Field $d 'set')
+        Zips      = $zipNames
+        DestParts = $parts
+        DestShown = '/' + $dest
+        Files     = @($files)
+        Url       = $url
+        Archives  = @($archives)
+        Uf2       = $uf2
+    }
+}
+
 # Read-Config of a configuration that is already read; Path names it in
 # messages, and relative database paths are made relative to ConfigDir.
 function ConvertFrom-Config([string] $Text, [string] $Path, [string] $ConfigDir) {
@@ -199,56 +341,19 @@ function ConvertFrom-Config([string] $Text, [string] $Path, [string] $ConfigDir)
     if ($null -eq (Get-Field $cfg 'cores') -or @(Get-Field $cfg 'cores').Count -eq 0) {
         throw "${Path}: no cores defined"
     }
+    # "data" holds game data that comes from one URL rather than from a MAME
+    # zip in the databases. It is a key of its own because copies of updateAll
+    # that predate it read this file too, and skip keys they do not know.
+    $data = @()
+    $p = $cfg.PSObject.Properties['data']
+    if ($p) {
+        $data = $p.Value
+        if ($data -isnot [array]) { throw "${Path}: 'data' must be a list" }
+    }
 
     $ids = @{}
-    $defs = foreach ($d in @(Get-Field $cfg 'cores')) {
-        $id = [string](Get-Field $d 'id')
-        foreach ($key in 'id', 'name', 'zips', 'destination', 'files') {
-            if ($null -eq (Get-Field $d $key)) { throw "${Path}: core '$id' has no '$key'" }
-        }
-        if ($ids.ContainsKey($id)) { throw "${Path}: core '$id' is defined twice" }
-        $ids[$id] = $true
-
-        $dest = ([string](Get-Field $d 'destination')).Replace('\', '/').Trim('/')
-        $parts = @($dest.Split('/'))
-        if (-not $dest -or @($parts | Where-Object { Test-BadName $_ }).Count -gt 0) {
-            throw "${Path}: core '$id' has an invalid destination '$(Get-Field $d 'destination')'"
-        }
-
-        $zipNames = @(Get-Field $d 'zips')
-        $fileDefs = @(Get-Field $d 'files')
-        if ($zipNames.Count -eq 0 -or $fileDefs.Count -eq 0) {
-            throw "${Path}: core '$id' needs at least one zip and one file"
-        }
-        if (@($zipNames | Where-Object { Test-BadName $_ }).Count -gt 0) {
-            throw "${Path}: core '$id' has an invalid zip name"
-        }
-        $files = foreach ($f in $fileDefs) {
-            $name = [string](Get-Field $f 'name')
-            if (Test-BadName $name) { throw "${Path}: core '$id' has an invalid file name '$name'" }
-            $size = Get-Field $f 'size'
-            $crcText = [string](Get-Field $f 'crc')
-            if ($null -eq $size -or $size -isnot [ValueType] -or -not $crcText) {
-                throw "${Path}: core '$id', file '$name' needs a numeric 'size' and a hexadecimal 'crc'"
-            }
-            try {
-                $crc = [Convert]::ToUInt32($crcText, 16)
-            } catch {
-                throw "${Path}: core '$id', file '$name' needs a numeric 'size' and a hexadecimal 'crc'"
-            }
-            [pscustomobject]@{ Name = $name; Size = [long]$size; Crc = $crc }
-        }
-
-        [pscustomobject]@{
-            Id        = $id
-            Name      = [string](Get-Field $d 'name')
-            Set       = [string](Get-Field $d 'set')
-            Zips      = $zipNames
-            DestParts = $parts
-            DestShown = '/' + $dest
-            Files     = @($files)
-        }
-    }
+    $defs = @(foreach ($d in @(Get-Field $cfg 'cores')) { ConvertFrom-Core $d $false $Path $ids }) +
+            @(foreach ($d in $data) { ConvertFrom-Core $d $true $Path $ids })
 
     $sources = @(Get-Field $cfg 'databases' | Where-Object { $null -ne $_ })
     if (@($sources | Where-Object { $_ -isnot [string] }).Count -gt 0) {
@@ -408,7 +513,16 @@ function Find-InDatabases([string] $ZipName) {
     return $null
 }
 
-function Invoke-Download([string] $Url, [string] $Dest, $Size, [string] $Md5) {
+function Test-Zip([string] $Path) {
+    try {
+        [System.IO.Compression.ZipFile]::OpenRead($Path).Dispose()
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function Invoke-Download([string] $Url, [string] $Dest, $Size, [string] $Md5, [bool] $NeedZip = $true) {
     $tmp = "$Dest.part"
     $reason = 'no attempt made'
     for ($attempt = 0; $attempt -lt $script:DownloadAttempts; $attempt++) {
@@ -422,11 +536,7 @@ function Invoke-Download([string] $Url, [string] $Dest, $Size, [string] $Md5) {
             if ($Md5 -and (Get-FileHash -LiteralPath $tmp -Algorithm MD5).Hash -ne $Md5) {
                 throw 'the MD5 does not match the database'
             }
-            try {
-                [System.IO.Compression.ZipFile]::OpenRead($tmp).Dispose()
-            } catch {
-                throw 'the file received is not a zip'
-            }
+            if ($NeedZip -and -not (Test-Zip $tmp)) { throw 'the file received is not a zip' }
             if ([System.IO.File]::Exists($Dest)) { [System.IO.File]::Delete($Dest) }
             [System.IO.File]::Move($tmp, $Dest)
             return $got
@@ -441,26 +551,42 @@ function Invoke-Download([string] $Url, [string] $Dest, $Size, [string] $Md5) {
     throw $reason
 }
 
-function Get-MissingZips($Def, [string] $ZipDir, [System.Collections.ArrayList] $ZipListing, [bool] $Preview) {
+function Get-Uf2Note([string] $Name, [uint32] $Address, [bool] $Preview) {
+    $verb = if ($Preview) { 'would convert' } else { 'converted' }
+    return ('{0} {1} to a UF2 image at 0x{2:X8}' -f $verb, $Name, $Address)
+}
+
+# Downloads the core's zips that are not in ZipDir, from the databases, or from
+# the core's own URL when UrlDownloads is set.
+function Get-MissingZips($Def, [string] $ZipDir, [System.Collections.ArrayList] $ZipListing, [bool] $Preview,
+                         [bool] $UrlDownloads) {
     $out = [pscustomobject]@{ Notes = @(); Errors = @(); Pending = $false }
     foreach ($zipName in $Def.Zips) {
         if (@($ZipListing | Where-Object { $_ -eq $zipName }).Count -gt 0) { continue }
-        $hit = Find-InDatabases $zipName
-        if (-not $hit) { continue }
+        if ($Def.Url) {
+            if (-not $UrlDownloads) { continue }
+            $hit = [pscustomobject]@{ Url = $Def.Url; Size = $null; Md5 = '' }
+            $source = ([Uri]$Def.Url).Host.ToLowerInvariant()
+        } else {
+            $hit = Find-InDatabases $zipName
+            if (-not $hit) { continue }
+            $source = $hit.Db.Id
+        }
         if ($Preview) {
-            $out.Notes += "would download $zipName from $($hit.Db.Id)"
+            $out.Notes += "would download $zipName from $source"
+            if ($Def.Uf2) { $out.Notes += Get-Uf2Note $zipName $Def.Uf2.Address $true }
             $out.Pending = $true
             continue
         }
         try {
             [void][System.IO.Directory]::CreateDirectory($ZipDir)
-            $got = Invoke-Download $hit.Url (Join-Path $ZipDir $zipName) $hit.Size $hit.Md5
+            $got = Invoke-Download $hit.Url (Join-Path $ZipDir $zipName) $hit.Size $hit.Md5 (-not $Def.Url)
         } catch {
-            $out.Errors += "download of $zipName from $($hit.Db.Id) failed: $($_.Exception.Message)"
+            $out.Errors += "download of $zipName from $source failed: $($_.Exception.Message)"
             continue
         }
         [void]$ZipListing.Add($zipName)
-        $out.Notes += "downloaded $zipName ($([math]::Floor(($got + 1023) / 1024)) KB) from $($hit.Db.Id)"
+        $out.Notes += "downloaded $zipName ($([math]::Floor(($got + 1023) / 1024)) KB) from $source"
     }
     return $out
 }
@@ -469,7 +595,10 @@ function Get-MissingZips($Def, [string] $ZipDir, [System.Collections.ArrayList] 
 # Extraction
 # ---------------------------------------------------------------------------
 
-function Get-EntryBytes([System.IO.Compression.ZipArchiveEntry] $Entry) {
+function Get-EntryBytes($Entry) {
+    if ($Entry -isnot [System.IO.Compression.ZipArchiveEntry]) {
+        return , $Entry.Data    # a plain file, see Open-Archives
+    }
     $stream = $Entry.Open()
     try {
         $buffer = New-Object System.IO.MemoryStream
@@ -490,9 +619,66 @@ function Test-Current([string] $Path, $File) {
     }
 }
 
+# The innermost message of an exception: what .NET says went wrong.
+function Get-InnerMessage([System.Exception] $Exception) {
+    while ($Exception.InnerException) { $Exception = $Exception.InnerException }
+    return $Exception.Message
+}
+
+# The archives to search in the file at Path, as @{ Label; Entries }: the zip
+# itself, or the file alone when game data is not a zip or is to become a UF2
+# image, plus the zips inside it that the core names in "archives". Opened zips
+# are added to Opened, to be closed by the caller; problems go to Res.Errors, and
+# a conversion to Res.Notes.
+function Open-Archives($Def, [string] $Path, $Res, [System.Collections.ArrayList] $Opened, [bool] $Preview) {
+    $leaf = Split-Path -Leaf $Path
+    if ($Def.Url -and ($Def.Uf2 -or -not (Test-Zip $Path))) {
+        try {
+            $bytes = [System.IO.File]::ReadAllBytes($Path)
+        } catch {
+            $Res.Errors += "cannot open ${leaf}: $(Get-InnerMessage $_.Exception)"
+            return
+        }
+        if ($Def.Uf2) {
+            $bytes = [UpdateAll.Uf2]::FromBinary($bytes, $Def.Uf2.Address, $Def.Uf2.Family)
+            $Res.Notes += Get-Uf2Note $leaf $Def.Uf2.Address $Preview
+        }
+        $entry = [pscustomobject]@{
+            Name = $leaf; FullName = $leaf; Length = [long]$bytes.Length
+            Crc32 = [UpdateAll.Crc32]::Compute($bytes); Data = $bytes
+        }
+        return [pscustomobject]@{ Label = $leaf; Entries = @($entry) }
+    }
+    try {
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    } catch {
+        $Res.Errors += "cannot open ${leaf}: $($_.Exception.InnerException.Message)"
+        return
+    }
+    [void]$Opened.Add($zip)
+    [pscustomobject]@{ Label = $leaf; Entries = @($zip.Entries) }
+    foreach ($inner in $Def.Archives) {
+        $found = $zip.Entries | Where-Object { $_.Name -eq $inner } | Select-Object -First 1
+        if (-not $found) {
+            $Res.Errors += "$leaf holds no $inner"
+            continue
+        }
+        $label = "${leaf}:$($found.FullName)"
+        try {
+            $bytes = Get-EntryBytes $found
+            $innerZip = New-Object System.IO.Compression.ZipArchive((New-Object System.IO.MemoryStream(, $bytes)))
+        } catch {
+            $Res.Errors += "cannot open ${label}: $(Get-InnerMessage $_.Exception)"
+            continue
+        }
+        [void]$Opened.Add($innerZip)
+        [pscustomobject]@{ Label = $label; Entries = @($innerZip.Entries) }
+    }
+}
+
 function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bool] $Preview) {
     $res = [pscustomobject]@{
-        Written = 0; Current = 0; Missing = @(); Errors = @(); Skipped = $null; Used = @()
+        Written = 0; Current = 0; Missing = @(); Errors = @(); Notes = @(); Skipped = $null; Used = @()
     }
 
     $paths = @(foreach ($zipName in $Def.Zips) {
@@ -515,34 +701,31 @@ function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bo
         $index = @{}
         $byName = @{}
         $unreadable = New-Object System.Collections.ArrayList
+        $firstLabel = $null
         foreach ($p in $paths) {
-            $zipLeaf = Split-Path -Leaf $p
-            try {
-                $zip = [System.IO.Compression.ZipFile]::OpenRead($p)
-            } catch {
-                $res.Errors += "cannot open ${zipLeaf}: $($_.Exception.InnerException.Message)"
-                continue
-            }
-            [void]$archives.Add($zip)
-            foreach ($entry in $zip.Entries) {
-                if (-not $entry.Name) { continue }
-                $nameKey = $entry.Name.ToLowerInvariant()
-                if (-not $byName.ContainsKey($nameKey)) { $byName[$nameKey] = New-Object System.Collections.ArrayList }
-                [void]$byName[$nameKey].Add([pscustomobject]@{ Zip = $zipLeaf; Entry = $entry })
-                if (-not $wantedSizes.ContainsKey([long]$entry.Length)) { continue }
-                try {
-                    if ($script:HasEntryCrc) {
-                        $crc = [uint32]$entry.Crc32
-                    } else {
-                        $crc = [UpdateAll.Crc32]::Compute((Get-EntryBytes $entry))
+            foreach ($arc in @(Open-Archives $Def $p $res $archives $Preview)) {
+                $zipLeaf = $arc.Label
+                if ($null -eq $firstLabel) { $firstLabel = $zipLeaf }
+                foreach ($entry in $arc.Entries) {
+                    if (-not $entry.Name) { continue }
+                    $nameKey = $entry.Name.ToLowerInvariant()
+                    if (-not $byName.ContainsKey($nameKey)) { $byName[$nameKey] = New-Object System.Collections.ArrayList }
+                    [void]$byName[$nameKey].Add([pscustomobject]@{ Zip = $zipLeaf; Entry = $entry })
+                    if (-not $wantedSizes.ContainsKey([long]$entry.Length)) { continue }
+                    try {
+                        if ($script:HasEntryCrc -or $entry -isnot [System.IO.Compression.ZipArchiveEntry]) {
+                            $crc = [uint32]$entry.Crc32
+                        } else {
+                            $crc = [UpdateAll.Crc32]::Compute((Get-EntryBytes $entry))
+                        }
+                    } catch {
+                        [void]$unreadable.Add("${zipLeaf}:$($entry.FullName)")
+                        continue
                     }
-                } catch {
-                    [void]$unreadable.Add("${zipLeaf}:$($entry.FullName)")
-                    continue
+                    $key = "$([long]$entry.Length):$crc"
+                    if (-not $index.ContainsKey($key)) { $index[$key] = New-Object System.Collections.ArrayList }
+                    [void]$index[$key].Add([pscustomobject]@{ Zip = $zipLeaf; Entry = $entry })
                 }
-                $key = "$([long]$entry.Length):$crc"
-                if (-not $index.ContainsKey($key)) { $index[$key] = New-Object System.Collections.ArrayList }
-                [void]$index[$key].Add([pscustomobject]@{ Zip = $zipLeaf; Entry = $entry })
             }
         }
 
@@ -550,7 +733,8 @@ function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bo
         foreach ($part in $Def.DestParts) { $dest = Join-Path $dest $part }
 
         foreach ($f in $Def.Files) {
-            $target = Join-Path $dest $f.Name
+            $target = Get-TargetPath $dest $f.Name
+            $wanted = $f.Name.Substring($f.Name.LastIndexOf('/') + 1)
             if (Test-Current $target $f) {
                 $res.Current++
                 continue
@@ -560,12 +744,15 @@ function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bo
             # name before any other file with the same contents.
             $rank = @(
                 @{ Expression = { $_.Entry.FullName.IndexOfAny([char[]]'/\') -ge 0 } },
-                @{ Expression = { $_.Entry.Name -ne $f.Name } }
+                @{ Expression = { $_.Entry.Name -ne $wanted } }
             )
             $key = "$([long]$f.Size):$($f.Crc)"
             if (-not $index.ContainsKey($key)) {
-                $nameKey = $f.Name.ToLowerInvariant()
-                if ($byName.ContainsKey($nameKey)) {
+                $nameKey = $wanted.ToLowerInvariant()
+                if ($Def.Uf2 -and $null -ne $firstLabel) {
+                    $res.Errors += "the UF2 image of $firstLabel is not the expected file " +
+                        '(damaged, or from a different version)'
+                } elseif ($byName.ContainsKey($nameKey)) {
                     $other = $byName[$nameKey] | Sort-Object $rank | Select-Object -First 1
                     $res.Errors += "$($other.Zip):$($other.Entry.FullName) is not the expected file " +
                         '(damaged, or from a different version of the set)'
@@ -592,7 +779,7 @@ function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bo
                 continue
             }
             try {
-                [void][System.IO.Directory]::CreateDirectory($dest)
+                [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target))
                 $tmp = "$target.tmp"
                 [System.IO.File]::WriteAllBytes($tmp, $data)
                 if ([System.IO.File]::Exists($target)) { [System.IO.File]::Delete($target) }
@@ -613,10 +800,15 @@ function Install-Core($Def, [string] $ZipDir, $ZipListing, [string] $SdRoot, [bo
     return $res
 }
 
+# Where a file goes: game data may name a subfolder ("baseq2/pak0.pak").
+function Get-TargetPath([string] $Dest, [string] $Name) {
+    return Join-Path $Dest $Name.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+}
+
 function Get-FilesToInstall($Def, [string] $SdRoot) {
     $dest = $SdRoot
     foreach ($part in $Def.DestParts) { $dest = Join-Path $dest $part }
-    return @($Def.Files | Where-Object { -not (Test-Current (Join-Path $dest $_.Name) $_) }).Count
+    return @($Def.Files | Where-Object { -not (Test-Current (Get-TargetPath $dest $_.Name) $_) }).Count
 }
 
 $exitCode = 1
@@ -663,7 +855,10 @@ try {
     }
 
     $sdRoot = Resolve-Folder $Sd 'SD card root'
-    $mayDownload = $script:DbSources.Count -gt 0 -and -not $NoDownload
+    # Game data has its own URL, so it can be downloaded without a database.
+    $useDatabases = $script:DbSources.Count -gt 0 -and -not $NoDownload
+    $urlDownloads = -not $NoDownload
+    $mayDownload = $useDatabases -or ($urlDownloads -and @($defs | Where-Object { $_.Url }).Count -gt 0)
     if (-not $Zips -and -not $mayDownload) {
         throw 'nothing to install from: give a zip folder with -Zips, or configure a database to download from'
     }
@@ -690,7 +885,7 @@ try {
     if ($setsFrom) { Write-Host "Sets from:    $setsFrom" }
     if ($Zips) { Write-Host "Zips from:    $zipDir" } else { Write-Host 'Zips from:    downloads only' }
     Write-Host "SD card:      $sdRoot"
-    if ($mayDownload) {
+    if ($useDatabases) {
         Write-Host "Databases:    $($script:DbSources.Count), used for zips that are not in the zip folder"
     }
     if ($DryRun) { Write-Host 'Dry run:      nothing is downloaded or written' }
@@ -707,7 +902,7 @@ try {
     if ([System.IO.Directory]::Exists($zipDir)) {
         foreach ($file in Get-ChildItem -LiteralPath $zipDir -File) { [void]$zipListing.Add($file.Name) }
     }
-    if (-not $mayDownload) { $script:DbSources = @() }
+    if (-not $useDatabases) { $script:DbSources = @() }
     $script:DbLoaded = $null
     $script:DbErrors = @()
     $script:WantedZips = @($defs | ForEach-Object { $_.Zips })
@@ -723,21 +918,23 @@ try {
             continue
         }
 
-        $fetch = Get-MissingZips $d $zipDir $zipListing $DryRun.IsPresent
+        $fetch = Get-MissingZips $d $zipDir $zipListing $DryRun.IsPresent $urlDownloads
         $res = Install-Core $d $zipDir $zipListing $sdRoot $DryRun.IsPresent
         $res.Errors = @($fetch.Errors) + @($res.Errors)
 
         if ($res.Skipped -and -not $fetch.Pending -and $fetch.Errors.Count -eq 0) {
             $skipped++
             $where = ''
-            if ($null -ne $script:DbLoaded -and @($script:DbLoaded).Count -gt 0) { $where = ', and not in any database' }
+            if ($null -ne $script:DbLoaded -and @($script:DbLoaded).Count -gt 0 -and -not $d.Url) {
+                $where = ', and not in any database'
+            }
             Write-Host "$($d.Name): skipped, $($res.Skipped)$where"
             continue
         }
 
         $zipsShown = if ($res.Used.Count -gt 0) { $res.Used -join ', ' } else { $d.Zips -join ', ' }
         Write-Host "$($d.Name): $zipsShown -> $($d.DestShown)"
-        foreach ($note in $fetch.Notes) { Write-Host "  $note" }
+        foreach ($note in @($fetch.Notes) + @($res.Notes)) { Write-Host "  $note" }
         if ($res.Skipped) {
             foreach ($err in $res.Errors) { Write-Host "  ERROR: $err" -ForegroundColor Red }
             if ($fetch.Pending) { $toDownload++ } else { $failed++ }

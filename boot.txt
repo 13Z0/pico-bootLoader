@@ -56,9 +56,10 @@ BASEDIR=/emu
 # Applications appear in the order the rows are written.
 #
 # Format of each row: <program_name>;<image_key>;<display_name>[;<aux_uf2>]
-# The optional 4th field names a companion data .uf2 (UF2 family RP2350 DATA)
-# in the same <BASEDIR>/<HW_CONFIG>/ folder, flashed alongside the app
-# (e.g. Doom's WAD).
+# The optional 4th field names a companion data .uf2 (UF2 family RP2350 DATA),
+# flashed alongside the app (e.g. Doom's WAD), by its path relative to /roms.
+# The loader looks there first, then for the same file name in the
+# <BASEDIR>/<HW_CONFIG>/ folder.
 #
 # This key is only used when BASEDIR holds no categories.txt. With categories,
 # each one names its own config file and INDEX is not read.

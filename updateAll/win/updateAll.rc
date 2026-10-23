@@ -33,7 +33,7 @@ BEGIN
     LTEXT           "Se&ts to install:", -1, 7, 45, 120, 8
     CONTROL         "", IDC_SETS, WC_LISTVIEW, LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL |
                     LVS_NOSORTHEADER | WS_BORDER | WS_TABSTOP, 7, 55, 406, 74
-    AUTOCHECKBOX    "&Download missing zips", IDC_DOWNLOAD, 7, 134, 220, 10
+    AUTOCHECKBOX    "&Download missing files", IDC_DOWNLOAD, 7, 134, 220, 10
     AUTOCHECKBOX    "Dry r&un: only show what would be done", IDC_DRYRUN, 230, 134, 183, 10
     LTEXT           "&Log:", -1, 7, 150, 60, 8
     EDITTEXT        IDC_LOG, 7, 160, 406, 110, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL |
@@ -56,7 +56,7 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "FileDescription", "updateAll - installs arcade ROM sets on the SD card"
+            VALUE "FileDescription", "updateAll - installs arcade ROM sets and game data on the SD card"
             VALUE "FileVersion", UA_VERSION
             VALUE "InternalName", "updateAll"
             VALUE "OriginalFilename", "updateAll.exe"

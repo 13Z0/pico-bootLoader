@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 typedef struct {
-    char *name;
+    char *name;         /* game data may give a subfolder: "baseq2/pak0.pak" */
     long long size;
     uint32_t crc;
 } ua_file;
@@ -25,6 +25,12 @@ typedef struct {
     char *dest_shown;   /* "/roms/arcade/PHOENIX" */
     ua_file *files;
     int nfiles;
+    char *url;          /* game data ("data" in the configuration): where its
+                           one zip or file comes from; NULL for a ROM set */
+    char **archives;    /* NULL-terminated: zips inside it to search too */
+    int narchives;
+    int uf2;            /* game data: install the download as a UF2 image */
+    uint32_t uf2_address, uf2_family;
 } ua_core;
 
 typedef struct {
@@ -58,7 +64,8 @@ typedef struct {
     void (*log)(void *ctx, int to_stderr, const char *line);
     /* Progress of the run: set n of nsets is being processed. */
     void (*on_set)(void *ctx, int n, int nsets);
-    /* Progress of a download; total is -1 when unknown. */
+    /* Progress of a download, or of converting game data into a UF2 image;
+       total is -1 when unknown. */
     void (*on_bytes)(void *ctx, long long done, long long total);
     /* Non-zero to stop the run. */
     int (*cancelled)(void *ctx);

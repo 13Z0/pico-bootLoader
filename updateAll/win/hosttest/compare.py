@@ -53,11 +53,28 @@ CASES = [
     ("config-url-nocores", "--config cfg_fetchnocores.json --zips {zips} --sd {card} --core alpha", None),
     ("config-url-off", "--config cfg_fetchoff.json --zips {zips} --sd {card} --core alpha", None),
     ("config-url-sd-missing", "--config cfg_fetch.json --zips {zips} --sd {fx}/no-card", None),
+    ("data-http", "--config cfg_data.json --zips {zips} --sd {card}", None),
+    ("data-dry-run", "--config cfg_data.json --zips {zips} --sd {card} --dry-run", None),
+    ("data-temp-folder", "--config cfg_data.json --sd {card} --core rho,sigma,tau,omega", None),
+    ("data-again", "--config cfg_data.json --sd {card} --core rho,sigma,tau,omega", "full_data"),
+    ("data-partial", "--config cfg_data.json --zips {zips} --sd {card} --core sigma", "card_data_partial"),
+    ("data-no-download", "--config cfg_data.json --zips {zips} --sd {card} --no-download --core rho,sigma", None),
+    ("data-no-download-no-zips", "--config cfg_data.json --sd {card} --no-download", None),
+    ("data-local", "--config cfg_data.json --zips {fx}/zips_data --sd {card} --no-download "
+                   "--core rho,sigma,tau", None),
+    ("data-uf2-local", "--config cfg_data.json --zips {fx}/zips_data --sd {card} --core omega", None),
+    ("data-uf2-local-dry-run", "--config cfg_data.json --zips {fx}/zips_data --sd {card} --dry-run "
+                               "--core omega", None),
+    ("data-uf2-mismatch", "--config cfg_data.json --zips {zips} --sd {card} --core omegabad", None),
+    ("data-core-filter", "--config cfg_data.json --zips {zips} --sd {card} --core TAU,theta", None),
+    ("data-only", "--config cfg_data.json --zips {zips} --sd {card} --core upsilon,phi,chi,psi", None),
 ]
 CASES += [(f"bad-config-{n}", f"--config bad_{n}.json --zips {{zips}} --sd {{card}}", None)
           for n in ("syntax", "nocores", "missing_key", "twice", "dest", "dest_empty", "nozips",
                     "zipname", "filename", "crc", "size", "databases", "config_url",
-                    "config_url_type")]
+                    "config_url_type", "data_type", "data_nourl", "data_url", "data_url_name",
+                    "data_name", "data_archives", "data_dup_id", "data_slash_in_core",
+                    "data_uf2", "data_uf2_type", "data_uf2_nofamily", "data_uf2_big")]
 
 # Error texts that only the platform decides: a JSON parser's own wording.
 NORMALISE = [
@@ -121,6 +138,12 @@ def main():
         os.makedirs(full)
         subprocess.run([sys.executable, SCRIPT, "--config", "cfg_local.json", "--zips",
                         os.path.join(fx, "zips"), "--sd", full], cwd=fx, env=env,
+                       stdout=subprocess.DEVNULL)
+        # And the card a complete game-data run leaves, for "data-again".
+        full_data = os.path.join(fx, "full_data")
+        os.makedirs(full_data)
+        subprocess.run([sys.executable, SCRIPT, "--config", "cfg_data.json", "--core",
+                        "rho,sigma,tau,omega", "--sd", full_data], cwd=fx, env=env,
                        stdout=subprocess.DEVNULL)
 
         failures = 0

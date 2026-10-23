@@ -1186,5 +1186,100 @@
         { "name": "bmk7.7c",   "size": 256,   "crc": "76307f8d" }
       ]
     }
+  ],
+  "data": [
+    {
+      "id": "doom",
+      "name": "Doom",
+      "set": "shareware DOOM1.WAD, converted for the bootloader",
+      "url": "https://raw.githubusercontent.com/PicoPlus-devel/pico-doom/v0.3/doom1.whx",
+      "uf2": { "address": "0x10200000", "family": "0xe48bff58" },
+      "destination": "/roms/doom",
+      "files": [
+        { "name": "doom1-whx-bootloader.uf2", "size": 3600896, "crc": "945a960a" }
+      ]
+    },
+    {
+      "id": "duke3d",
+      "name": "Duke Nukem 3D",
+      "set": "shareware 1.3d",
+      "url": "https://archive.org/download/3dduke13/3dduke13.zip",
+      "archives": ["DN3DSW13.SHR"],
+      "destination": "/roms/duke3d",
+      "files": [
+        { "name": "DUKE3D.GRP",  "size": 11035779, "crc": "983ad923" },
+        { "name": "LICENSE.TXT", "size": 9108,     "crc": "5c41fbe4" }
+      ]
+    },
+    {
+      "id": "quake2",
+      "name": "Quake II",
+      "set": "demo 3.14",
+      "url": "https://github.com/PicoPlus-devel/pico-quake2/releases/download/v0.2-alpha/pico-quake2_demo_sdcard.zip",
+      "destination": "/roms/quake2",
+      "files": [
+        { "name": "baseq2/pak0.pak",                      "size": 49951322, "crc": "cdd535b6" },
+        { "name": "license.txt",                          "size": 8963,     "crc": "c92e8136" },
+        { "name": "baseq2/players/female/athena.pcx",     "size": 50156,    "crc": "9cbdae2a" },
+        { "name": "baseq2/players/female/athena_i.pcx",   "size": 1921,     "crc": "ea65f155" },
+        { "name": "baseq2/players/female/brianna.pcx",    "size": 50897,    "crc": "40a81c17" },
+        { "name": "baseq2/players/female/brianna_i.pcx",  "size": 1968,     "crc": "09819bbb" },
+        { "name": "baseq2/players/female/cobalt.pcx",     "size": 50813,    "crc": "deee2bb7" },
+        { "name": "baseq2/players/female/cobalt_i.pcx",   "size": 1940,     "crc": "e828450f" },
+        { "name": "baseq2/players/female/doomgal.pcx",    "size": 36277,    "crc": "05aca095" },
+        { "name": "baseq2/players/female/doomgal_i.pcx",  "size": 1803,     "crc": "22ba2533" },
+        { "name": "baseq2/players/female/ensign.pcx",     "size": 52745,    "crc": "7e438375" },
+        { "name": "baseq2/players/female/ensign_i.pcx",   "size": 1971,     "crc": "17f0ae67" },
+        { "name": "baseq2/players/female/jezebel.pcx",    "size": 51062,    "crc": "cb4c9f90" },
+        { "name": "baseq2/players/female/jezebel_i.pcx",  "size": 1950,     "crc": "9c0f4598" },
+        { "name": "baseq2/players/female/jungle.pcx",     "size": 61037,    "crc": "c87a3454" },
+        { "name": "baseq2/players/female/jungle_i.pcx",   "size": 2118,     "crc": "d96387fd" },
+        { "name": "baseq2/players/female/lotus.pcx",      "size": 54147,    "crc": "1ddc942b" },
+        { "name": "baseq2/players/female/lotus_i.pcx",    "size": 2021,     "crc": "8d151c01" },
+        { "name": "baseq2/players/female/stiletto.pcx",   "size": 54074,    "crc": "6163079f" },
+        { "name": "baseq2/players/female/stiletto_i.pcx", "size": 2040,     "crc": "ec0a3c45" },
+        { "name": "baseq2/players/female/tris.md2",       "size": 275632,   "crc": "3a394fc4" },
+        { "name": "baseq2/players/female/venus.pcx",      "size": 50891,    "crc": "05cd9b0d" },
+        { "name": "baseq2/players/female/venus_i.pcx",    "size": 1963,     "crc": "a63baeef" },
+        { "name": "baseq2/players/female/voodoo.pcx",     "size": 51033,    "crc": "55980736" },
+        { "name": "baseq2/players/female/voodoo_i.pcx",   "size": 1970,     "crc": "055c4a54" },
+        { "name": "baseq2/players/female/weapon.md2",     "size": 38912,    "crc": "d8ae1111" },
+        { "name": "baseq2/players/female/weapon.pcx",     "size": 9089,     "crc": "942b09fb" },
+        { "name": "baseq2/players/male/cipher.pcx",       "size": 56554,    "crc": "082611e3" },
+        { "name": "baseq2/players/male/cipher_i.pcx",     "size": 1940,     "crc": "c4ccb6fe" },
+        { "name": "baseq2/players/male/claymore.pcx",     "size": 56727,    "crc": "05762bce" },
+        { "name": "baseq2/players/male/claymore_i.pcx",   "size": 1939,     "crc": "1b64c029" },
+        { "name": "baseq2/players/male/flak.pcx",         "size": 56636,    "crc": "8180032f" },
+        { "name": "baseq2/players/male/flak_i.pcx",       "size": 1971,     "crc": "b97bb3e5" },
+        { "name": "baseq2/players/male/grunt.pcx",        "size": 58004,    "crc": "c97e896f" },
+        { "name": "baseq2/players/male/grunt_i.pcx",      "size": 1967,     "crc": "beefff9d" },
+        { "name": "baseq2/players/male/howitzer.pcx",     "size": 59655,    "crc": "e45dc37f" },
+        { "name": "baseq2/players/male/howitzer_i.pcx",   "size": 1979,     "crc": "89db2925" },
+        { "name": "baseq2/players/male/major.pcx",        "size": 58158,    "crc": "58a489a7" },
+        { "name": "baseq2/players/male/major_i.pcx",      "size": 1971,     "crc": "57d65b0d" },
+        { "name": "baseq2/players/male/nightops.pcx",     "size": 57938,    "crc": "72c9c675" },
+        { "name": "baseq2/players/male/nightops_i.pcx",   "size": 1976,     "crc": "35d7691b" },
+        { "name": "baseq2/players/male/pointman.pcx",     "size": 58619,    "crc": "eff6b8b4" },
+        { "name": "baseq2/players/male/pointman_i.pcx",   "size": 1956,     "crc": "3074610c" },
+        { "name": "baseq2/players/male/psycho.pcx",       "size": 56607,    "crc": "3f94907e" },
+        { "name": "baseq2/players/male/psycho_i.pcx",     "size": 1937,     "crc": "63b94b33" },
+        { "name": "baseq2/players/male/rampage.pcx",      "size": 56685,    "crc": "e782507b" },
+        { "name": "baseq2/players/male/rampage_i.pcx",    "size": 1936,     "crc": "20809dcd" },
+        { "name": "baseq2/players/male/razor.pcx",        "size": 56767,    "crc": "127a5c72" },
+        { "name": "baseq2/players/male/razor_i.pcx",      "size": 1924,     "crc": "9a63ebf0" },
+        { "name": "baseq2/players/male/recon.pcx",        "size": 56672,    "crc": "d1b0146e" },
+        { "name": "baseq2/players/male/recon_i.pcx",      "size": 1936,     "crc": "98fd5335" },
+        { "name": "baseq2/players/male/scout.pcx",        "size": 57298,    "crc": "6bd12a25" },
+        { "name": "baseq2/players/male/scout_i.pcx",      "size": 1959,     "crc": "668412dd" },
+        { "name": "baseq2/players/male/skin.pcx",         "size": 64705,    "crc": "f55739c3" },
+        { "name": "baseq2/players/male/sniper.pcx",       "size": 61661,    "crc": "3479c1f9" },
+        { "name": "baseq2/players/male/sniper_i.pcx",     "size": 2109,     "crc": "d936909b" },
+        { "name": "baseq2/players/male/tris.md2",         "size": 278592,   "crc": "0661a4e7" },
+        { "name": "baseq2/players/male/viper.pcx",        "size": 56334,    "crc": "d8a3c594" },
+        { "name": "baseq2/players/male/viper_i.pcx",      "size": 1925,     "crc": "92600e86" },
+        { "name": "baseq2/players/male/weapon.md2",       "size": 38912,    "crc": "47a7291d" },
+        { "name": "baseq2/players/male/weapon.pcx",       "size": 9089,     "crc": "942b09fb" }
+      ]
+    }
   ]
 }

@@ -108,6 +108,7 @@ declare -A REPO_OF=(
     [doom_tiny]=pico-doom
     [doom_tiny_full]=pico-doom
     [duke3d_game]=pico-duke3D
+    [pico-quake2]=pico-quake2
     [colecojam]=cogliano/Adafruit_ColecoJam
 )
 
@@ -121,7 +122,7 @@ repo_url() {
 repo_name() { echo "${REPO_OF[$1]##*/}"; }
 
 # --- Script-built apps -------------------------------------------------------
-# The native ports (Doom!, Duke Nukem 3D) and the ColecoVision emulator
+# The native ports (Doom!, Duke Nukem 3D, Quake II) and the ColecoVision emulator
 # (Adafruit_ColecoJam) are special cases. Unlike the emulators above they target
 # only a handful of specific boards, carry no pico_shared (so there is no
 # SWVERSION to stamp), and use a per-board build script instead of bld.sh. They
@@ -132,7 +133,10 @@ repo_name() { echo "${REPO_OF[$1]##*/}"; }
 # full-version was merged, main carries the -build-forbootloader.sh and
 # -build-full-forbootloader.sh families for every board it supports.
 #   doom_tiny       shareware, WHX baked into flash as a companion DATA UF2
-#                   (the emulators.txt aux_uf2 column)
+#                   (the emulators.txt aux_uf2 column), at the same address on
+#                   every board. It is installed next to the app, where the
+#                   loader falls back to; the SD-card archive leaves it out, as
+#                   updateAll makes the same file in /roms/doom/ from doom1.whx
 #   doom_tiny_full  registered/Ultimate DOOM; nothing extra in flash — at boot
 #                   the game copies /roms/doom/doom.whd from the SD card into
 #                   PSRAM, so the board must have PSRAM
@@ -146,8 +150,13 @@ repo_name() { echo "${REPO_OF[$1]##*/}"; }
 # both build at once, and one shared checkout would have two jobs fetching and
 # checking it out concurrently. That is cheap: neither repo vendors the SDK,
 # pico-extras or Pico-PIO-USB as submodules — they come from the environment —
-# so a clone is small. (pico-duke3D does track an 11 MB DUKE3D.GRP, which a
-# --depth 1 clone still pulls; the clone is reused across boards within a run.)
+# so a clone is small, and is reused across boards within a run.
+#
+# pico-quake2 ships one, pico-quake2, for boards 2 and 8. Like Duke it keeps no
+# companion image: the paks stay in /roms/quake2 on the SD card, and the game
+# copies each level's assets into a flash cache above its own image at run time.
+# It needs PSRAM and 16 MB of flash, and PIO USB on both boards. Its CMake target
+# is quake2, so the UF2 it produces is quake2.uf2, not <prog>.uf2.
 #
 # Adafruit_ColecoJam ships one, colecojam, for the Fruit Jam only. It is hosted
 # outside $GITHUB_OWNER and its tags carry no "v" prefix (1.3), which
@@ -163,12 +172,14 @@ declare -A SCRIPTED_BRANCH=(
     [doom_tiny]=main
     [doom_tiny_full]=main
     [duke3d_game]=fix/audio-production-rate
+    [pico-quake2]=main
     [colecojam]=main
 )
 declare -A SCRIPTED_CLONE_OF=(
     [doom_tiny]=pico-doom
     [doom_tiny_full]=pico-doom-full
     [duke3d_game]=pico-duke3D
+    [pico-quake2]=pico-quake2
     [colecojam]=Adafruit_ColecoJam
 )
 # The git ref each variant is actually cloned at — a tag when one exists, else
@@ -180,47 +191,66 @@ declare -A SCRIPTED_SCRIPT_FMT=(
     [doom_tiny]="%s-build-forbootloader.sh"
     [doom_tiny_full]="%s-build-full-forbootloader.sh"
     [duke3d_game]="%s-build-forbootloader.sh"
+    [pico-quake2]="%s-build-forbootloader.sh"
     [colecojam]="%s-build-forbootloader.sh"
 )
 declare -A SCRIPTED_BUILD_FMT=(
     [doom_tiny]="build_bl_%s"
     [doom_tiny_full]="build_bl_full_%s"
     [duke3d_game]="build_bl_%s"
+    [pico-quake2]="build_bl_%s"
     [colecojam]="build_bl_%s"
 )
 # Where under the build tree the produced UF2s land. pico-doom puts them in
-# src/; pico-duke3D one level deeper, in src/pico/; Adafruit_ColecoJam in the
-# build tree itself.
+# src/; pico-duke3D and pico-quake2 one level deeper, in src/pico/;
+# Adafruit_ColecoJam in the build tree itself.
 declare -A SCRIPTED_OUT_SUBDIR=(
     [doom_tiny]="src"
     [doom_tiny_full]="src"
     [duke3d_game]="src/pico"
+    [pico-quake2]="src/pico"
     [colecojam]="."
+)
+# The app UF2's file name in that directory, for a variant whose CMake target is
+# not named after its program name. Any variant not listed produces <prog>.uf2.
+# It is installed as emu/<hw>/<prog>.uf2 either way.
+declare -A SCRIPTED_UF2_OF=(
+    [pico-quake2]="quake2.uf2"
 )
 # Companion DATA-family UF2 the variant must produce (emulators.txt aux_uf2
 # column), or "" when it needs none. Every per-board build script that emits one
 # emits it under exactly this name.
 declare -A SCRIPTED_AUX_OF=(
-    [doom_tiny]="doom1-whx.uf2"
+    [doom_tiny]="doom1-whx-bootloader.uf2"
     [doom_tiny_full]=""
     [duke3d_game]=""
+    [pico-quake2]=""
     [colecojam]=""
 )
 # 1 for a variant whose build resolves its toolchain through pico-extras.
-# pico-doom does (via its pico-env.sh); pico-duke3D and Adafruit_ColecoJam do
-# not, so they must still build when PICO_EXTRAS_PATH is unset.
+# pico-doom does (via its pico-env.sh); pico-duke3D, pico-quake2 and
+# Adafruit_ColecoJam do not, so they must still build when PICO_EXTRAS_PATH is
+# unset.
 declare -A SCRIPTED_NEEDS_EXTRAS=(
     [doom_tiny]=1
     [doom_tiny_full]=1
     [duke3d_game]=0
+    [pico-quake2]=0
     [colecojam]=0
+)
+# 1 for a variant that needs PICO_PIO_USB_PATH on every board it builds for,
+# including boards outside PIOUSB_CONFIGS. pico-quake2 drives USB host over PIO
+# on HW_CONFIG 2 as well, and its CMake stops without Pico-PIO-USB.
+declare -A SCRIPTED_NEEDS_PIOUSB=(
+    [pico-quake2]=1
 )
 # HW_CONFIG -> board "tag" naming the per-board build script and build tree.
 # Shared across the family: the tag is the board's canonical short name and every
 # repo uses the same spelling. Each tag <T> implies, for a variant with script
 # format <SF>, build format <BF>, output subdir <SD> and program name <P>:
 #                   build script   printf <SF> <T>
-#                   build output    printf <BF> <T>/<SD>/<P>.uf2   (app)
+#                   build output    printf <BF> <T>/<SD>/<P>.uf2   (app; or
+#                                   SCRIPTED_UF2_OF[<P>] instead of <P>.uf2)
 #                   aux produced    printf <BF> <T>/<SD>/${SCRIPTED_AUX_OF[<P>]}
 declare -A BOARD_TAG=(
     [2]=adafruitdvisd    # Adafruit DVI + MicroSD breakouts
@@ -235,6 +265,7 @@ declare -A SCRIPTED_HWCONFIGS=(
     [doom_tiny]="2 8 13 14 15"
     [doom_tiny_full]="2 8 13 14 15"
     [duke3d_game]="2 8 13 15"
+    [pico-quake2]="2 8"
     [colecojam]="8"
 )
 
@@ -647,6 +678,13 @@ _build_scripted() {
         echo "SKIP:PICO_EXTRAS_PATH unset or not a pico-extras checkout ($repo needs it)|$elapsed" > "$status_file"
         return 0
     fi
+    # The PIO-USB boards are dropped up front when Pico-PIO-USB is missing; this
+    # catches a variant that also needs it on a board outside PIOUSB_CONFIGS.
+    if [ "${SCRIPTED_NEEDS_PIOUSB[$prog]:-0}" = 1 ] && ! piousb_available; then
+        elapsed=$(( SECONDS - t0 ))
+        echo "SKIP:PICO_PIO_USB_PATH unset or not a Pico-PIO-USB checkout ($repo needs it)|$elapsed" > "$status_file"
+        return 0
+    fi
     local build_script build_subdir
     printf -v build_script "${SCRIPTED_SCRIPT_FMT[$prog]}" "$board"
     printf -v build_subdir "${SCRIPTED_BUILD_FMT[$prog]}" "$board"
@@ -666,11 +704,11 @@ _build_scripted() {
     rm -f "$out_dir/${prog}.uf2"
     if [ -n "$aux" ]; then
         rm -f "$out_dir/$aux"
-        # Also sweep the old per-board WAD name emulators.txt used to declare, so
-        # a card refreshed from an earlier build doesn't keep an orphan around.
+        # Also sweep the WAD names emulators.txt used to declare, so a card
+        # refreshed from an earlier build doesn't keep an orphan around.
         shopt -s nullglob
         local stale
-        for stale in "$out_dir"/doom1-whx-for-*.uf2; do rm -f "$stale"; done
+        for stale in "$out_dir"/doom1-whx-for-*.uf2 "$out_dir"/doom1-whx.uf2; do rm -f "$stale"; done
         shopt -u nullglob
     fi
 
@@ -737,11 +775,11 @@ _build_scripted() {
 
     info "[$prog] locating produced UF2s"
     # The subdirectory differs per repo: pico-doom emits into src/, pico-duke3D
-    # into src/pico/. Naming the exact file rather than globbing *.uf2 also keeps
-    # us off pico-duke3D's duke3d.uf2, the M0 bring-up harness its Fruit Jam
-    # build tree carries alongside the game.
+    # and pico-quake2 into src/pico/. Naming the exact file rather than globbing
+    # *.uf2 also keeps us off pico-duke3D's duke3d.uf2, the M0 bring-up harness
+    # its Fruit Jam build tree carries alongside the game.
     local src_dir="$dest/$build_subdir/${SCRIPTED_OUT_SUBDIR[$prog]}"
-    local app_uf2="$src_dir/${prog}.uf2"
+    local app_uf2="$src_dir/${SCRIPTED_UF2_OF[$prog]:-${prog}.uf2}"
     # -s, not -f: this build has been observed to leave a 0-byte doom_tiny.uf2
     # behind, which a plain -f test happily reported as BUILT and shipped.
     if [ ! -s "$app_uf2" ]; then

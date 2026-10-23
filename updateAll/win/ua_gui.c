@@ -304,9 +304,19 @@ static int checked_sets(void)
     return n;
 }
 
+/* There is something to download from: a database for the ROM sets, or game
+   data, which has a URL of its own. */
+static int can_download(void)
+{
+    int any_url = 0;
+    for (int i = 0; i < app.cfg.ncores; i++)
+        any_url |= app.cfg.cores[i].url != NULL;
+    return app.cfg.ndatabases > 0 || any_url;
+}
+
 static int may_download(void)
 {
-    return app.cfg_ok && app.cfg.ndatabases > 0 && IsDlgButtonChecked(app.dlg, IDC_DOWNLOAD);
+    return app.cfg_ok && can_download() && IsDlgButtonChecked(app.dlg, IDC_DOWNLOAD);
 }
 
 static void update_buttons(void)
@@ -588,20 +598,20 @@ static void size_status_column(void)
 }
 
 /* The download box and the hint in the zip folder field follow whether there
-   is a database; had is how many there were before the configuration
-   changed. */
+   is anything to download from; had is whether there was before the
+   configuration changed. */
 static void show_databases(int had)
 {
     SendMessageW(item(IDC_ZIPS), EM_SETCUEBANNER, TRUE,
-                 (LPARAM)(app.cfg.ndatabases ? L"Optional: folder with MAME zips"
-                                             : L"Folder with MAME zips"));
-    if (app.cfg.ndatabases) {
-        SetDlgItemTextW(app.dlg, IDC_DOWNLOAD, L"&Download missing zips");
+                 (LPARAM)(can_download() ? L"Optional: folder with MAME zips"
+                                         : L"Folder with MAME zips"));
+    if (can_download()) {
+        SetDlgItemTextW(app.dlg, IDC_DOWNLOAD, L"&Download missing files");
         EnableWindow(item(IDC_DOWNLOAD), !app.running);
         if (!had)
             CheckDlgButton(app.dlg, IDC_DOWNLOAD, BST_CHECKED);
     } else {
-        SetDlgItemTextW(app.dlg, IDC_DOWNLOAD, L"Download missing zips (no database configured)");
+        SetDlgItemTextW(app.dlg, IDC_DOWNLOAD, L"Download missing files (nothing to download from)");
         CheckDlgButton(app.dlg, IDC_DOWNLOAD, BST_UNCHECKED);
         EnableWindow(item(IDC_DOWNLOAD), FALSE);
     }
@@ -618,9 +628,9 @@ static void log_config(void)
              c->ncores, c->ncores == 1 ? L"" : L"s", c->ndatabases, c->ndatabases == 1 ? L"" : L"s",
              why ? L" (" : L"", why ? why : L"", why ? L")" : L"");
     log_text(line);
-    log_text(c->ndatabases
+    log_text(can_download()
                  ? L"Choose the SD card, and the folder with your MAME zips if you have one. "
-                   L"Zips that are not in it are downloaded.\r\n"
+                   L"Files that are not in it are downloaded.\r\n"
                  : L"Choose the SD card and the folder with your MAME zips.\r\n");
     free(line);
     free(why);
@@ -637,7 +647,7 @@ static void config_fetched(fetched *f)
         for (int i = 0, n = 0; i < app.cfg.ncores; i++)
             if (!ListView_GetCheckState(item(IDC_SETS), i))
                 unticked[n++] = _strdup(app.cfg.cores[i].id);
-        int had = app.cfg.ndatabases;
+        int had = can_download();
         ua_config_free(&app.cfg);
         app.cfg = f->cfg;
         fill_sets(unticked);
@@ -707,8 +717,9 @@ static void init_dialog(HWND dlg)
     SendMessageW(item(IDC_LOG), EM_SETLIMITTEXT, 0, 0);
     SendMessageW(item(IDC_PROGRESS), PBM_SETRANGE32, 0, 1000);
 
-    log_text(L"updateAll installs arcade ROM sets on the SD card. The ROM sets are copyright "
-             L"of their manufacturers and are not included with this program.\r\n\r\n");
+    log_text(L"updateAll installs arcade ROM sets, and the shareware or demo data of the ported "
+             L"games, on the SD card. The ROM sets are copyright of their manufacturers and are "
+             L"not included with this program.\r\n\r\n");
     load_config();
     if (app.cfg_ok) {
         init_sets();

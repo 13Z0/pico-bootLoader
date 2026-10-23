@@ -6,6 +6,37 @@ A resident .uf2 bootloader / front-end for the RP2350 retro-emulator family (pic
 
 [Binaries for each configuration and PCB design are at the end of this page](#downloads___).
 
+## v0.8
+
+**updateAll** now also installs the free shareware and demo data of *Doom*,
+*Duke Nukem 3D* and *Quake II*, so these games no longer need files from
+elsewhere.
+
+> **Do you need to update?** Yes. Re-flash the board, replace the `/emu` and
+> `updateAll` folders on the card with the ones in the new
+> `pico-bootLoader_sdcard.zip`, and run **updateAll**: *Doom!* needs it, as the
+> archive no longer contains Doom's game data.
+
+### Changes
+
+- **Quake II** joins the Ports category. It runs on the Adafruit Fruit Jam and
+  on a Pimoroni Pico Plus 2 with the Adafruit DVI and microSD breakouts, and
+  needs 8 MB of PSRAM and 16 MB of flash.
+- *Doom!*'s game data now lives in `/roms/doom/` on the card, where updateAll
+  puts it. It is the same file for every board.
+- When that file is missing, the menu says so and names the folder it belongs
+  in, instead of starting the game without it.
+- updateAll installs the shareware version of *Duke Nukem 3D* in
+  `/roms/duke3d/` and the *Quake II* demo in `/roms/quake2/`.
+- **PicoNES PCB with SNES controller ports.** PCB design v2.8, designed by
+  John Edgar Park ([@johnedgarpark](https://twitter.com/johnedgarpark)), has
+  two SNES controller ports, so original SNES controllers plug in without an
+  adapter cable. The Gerber file `pico_nesPCB_v2.8_SNES_PORTS.zip` is attached
+  to the release. See
+  [Custom PCBs](https://github.com/PicoPlus-devel/pico-bootLoader#custom-pcbs).
+- All PicoNES designs, with parts lists and pictures, are now described in the
+  [PCB README](https://github.com/PicoPlus-devel/pico_shared/blob/main/PCB/README.md).
+
 ## v0.7.2
 
 An SD-card update: **Galagino** now plays 47 arcade games instead of six, and

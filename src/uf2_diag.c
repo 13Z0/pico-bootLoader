@@ -46,6 +46,7 @@ const char *uf2_diag_reason_str(uf2_diag_reason_t reason)
     case UF2_DIAG_WRONG_FAMILY:    return "built for the wrong chip/architecture";
     case UF2_DIAG_CORRUPT:         return "corrupt UF2";
     case UF2_DIAG_UNREADABLE:      return "unreadable";
+    case UF2_DIAG_NOT_FOUND:       return "not on the card";
     default:                       return "undetermined";
     }
 }

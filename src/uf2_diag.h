@@ -32,6 +32,7 @@ typedef enum {
     UF2_DIAG_WRONG_FAMILY,    /* RP2040 / RISC-V / non-secure Arm / data build */
     UF2_DIAG_CORRUPT,         /* bad magic, misaligned or truncated blocks     */
     UF2_DIAG_UNREADABLE,      /* could not open / read the file at all         */
+    UF2_DIAG_NOT_FOUND,       /* aux file in neither /roms nor the config dir  */
     UF2_DIAG_UNKNOWN,         /* nothing recognisable; fall back to result str */
 } uf2_diag_reason_t;
 

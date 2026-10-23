@@ -28,10 +28,10 @@
  *
  * Serial output: all diagnostics go to UART (PICO_DEFAULT_UART, pins 44/45 on
  * Fruit Jam, 115200-8N1). Tag every line with "[bootLoader] " so they stand out
- * when the freshly-launched emulator starts speaking. Output is buffered and
- * sent in the background (src/stdio_buffered.h); call stdio_buffered_flush()
- * -- not stdio_flush(), which no longer waits -- before any reboot or launch,
- * or the tail of the log is cut off.
+ * when the freshly-launched emulator starts speaking. printf waits for the
+ * UART: the buffered driver in src/stdio_buffered.h is not enabled (see
+ * main()), so the stdio_buffered_flush() before each reboot or launch is
+ * plain stdio_flush().
  */
 #include <cstdio>
 #include <cstring>
@@ -2419,7 +2419,11 @@ int main()
     }
 
     Frens::setClocksAndStartStdio(CPUFREQ_KHZ, VREG_VOLTAGE_1_30);
-    stdio_buffered_init();     // from here on printf no longer waits for the UART
+    // stdio_buffered_init() is deliberately not called. With the buffered
+    // driver, the HSTX picture dropped out -- and the board sometimes locked
+    // up -- while an application was being written to flash (Fruit Jam, and a
+    // Pico Plus 2 on HW_CONFIG 2); it saved little start-up time. printf waits
+    // for the UART again, and stdio_buffered_flush() is plain stdio_flush().
     logPhase("clocks and stdio up");
 
     // --- BANNER -------------------------------------------------------------

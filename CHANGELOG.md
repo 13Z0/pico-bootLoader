@@ -22,6 +22,9 @@ elsewhere.
 - **Quake II** joins the Ports category. It runs on the Adafruit Fruit Jam and
   on a Pimoroni Pico Plus 2 with the Adafruit DVI and microSD breakouts, and
   needs 8 MB of PSRAM and 16 MB of flash.
+- The picture no longer drops out, and the board no longer locks up, while an
+  application is being written to flash. This affected the boards that show a
+  progress bar during flashing, since v0.7.
 - *Doom!*'s game data now lives in `/roms/doom/` on the card, where updateAll
   puts it. It is the same file for every board.
 - When that file is missing, the menu says so and names the folder it belongs

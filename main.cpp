@@ -175,7 +175,7 @@ struct SdEmu {
     char prog_name[PROG_NAME_MAX];           // binary_info match key ("" if not extractable)
     char image_key[IMAGE_KEY_MAX];           // emulators.txt column 2 ("md", "nes", ...)
     char display_name[DISPLAY_NAME_MAX];     // emulators.txt column 3 (human-readable)
-    char aux_uf2[AUX_UF2_MAX];               // emulators.txt column 4 (basename of aux .uf2; "" = none)
+    char aux_uf2[AUX_UF2_MAX];               // emulators.txt column 4 (aux .uf2 under /roms; "" = none)
 };
 
 // One .uf2 found in the config dir. Filled once by scanUf2Dir() and then read
@@ -243,27 +243,73 @@ bool rangeInPartition(const uf2_fingerprint_t &fp)
            fp.image_size > 0 && fp.image_size <= end - fp.image_base;
 }
 
-// True when the `role` record names `filename`, that file still has the
-// recorded size and timestamp, and the flash range the record names still
-// CRCs to the recorded value: then flash holds exactly what the file holds,
-// without reading the file. Flash-only CRC, no SD reads beyond one f_stat.
-bool recordStillMatches(flash_record_role_t role, const char *filename)
+// True when the `role` record names `filename` and the flash range it names
+// still CRCs to the recorded value: flash still holds what was written from
+// that file. Flash-only CRC, no SD access at all.
+bool recordRangeIntact(flash_record_role_t role, const char *filename)
 {
     const flash_record_t &rec = g_flashrec.row[role];
-    if (!flash_record_file_unchanged(&rec, g_emuDir, filename)) return false;
+    if (!rec.valid || strcmp(rec.filename, filename) != 0) return false;
     if (!rangeInPartition(rec.fp)) return false;
     uint32_t crc = 0;
     return uf2_fingerprint_from_xip(rec.fp.image_base, rec.fp.image_size, &crc) &&
            crc == rec.fp.crc;
 }
 
-// Note that flash now holds `filename`'s image (fingerprint `fp`).
-void recordInFlash(flash_record_role_t role, const char *filename,
+// True when the `role` record names `filename`, <dir>/<filename> still has the
+// recorded size and timestamp, and the flash range the record names still
+// CRCs to the recorded value: then flash holds exactly what the file holds,
+// without reading the file. Flash-only CRC, no SD reads beyond one f_stat.
+bool recordStillMatches(flash_record_role_t role, const char *dir, const char *filename)
+{
+    return flash_record_file_unchanged(&g_flashrec.row[role], dir, filename) &&
+           recordRangeIntact(role, filename);
+}
+
+// Note that flash now holds the image of <dir>/<filename> (fingerprint `fp`).
+void recordInFlash(flash_record_role_t role, const char *dir, const char *filename,
                    const uf2_fingerprint_t &fp)
 {
-    if (!flash_record_set(&g_flashrec.row[role], g_emuDir, filename, &fp)) {
-        LOG("flash record: cannot stat %s/%s; row left out", g_emuDir, filename);
+    if (!flash_record_set(&g_flashrec.row[role], dir, filename, &fp)) {
+        LOG("flash record: cannot stat %s/%s; row left out", dir, filename);
     }
+}
+
+// Where emulators.txt column 4 is looked for first: the value is a path
+// relative to this folder ("doom/doom1-whx-bootloader.uf2"), so the data sits
+// with the application's other files and updateAll can install it.
+#define AUX_ROMS_DIR "/roms"
+
+// Room for either place resolveAuxPath() looks: "/roms/<column 4>", or
+// "<g_emuDir>/<file name>". Sized to that rather than FF_MAX_LFN, as these
+// buffers sit on core0's 3 KB stack on top of main()'s own frame.
+#define AUX_PATH_MAX (sizeof(g_emuDir) + AUX_UF2_MAX)
+
+// The file name part of a column-4 value.
+const char *auxBaseName(const char *aux)
+{
+    const char *slash = strrchr(aux, '/');
+    return slash ? slash + 1 : aux;
+}
+
+// Find the file a column-4 value names: /roms/<aux> first, then the same file
+// name in the config dir, next to the application. `full` (AUX_PATH_MAX) gets
+// its path and, unless it is null, `dir` (AUX_PATH_MAX) its folder. When
+// neither exists, they describe the /roms place -- the one to tell the user
+// about -- and the result is false.
+bool resolveAuxPath(const char *aux, char *full, char *dir)
+{
+    while (*aux == '/') aux++;
+    FILINFO fi;
+    snprintf(full, AUX_PATH_MAX, "%s/%s", AUX_ROMS_DIR, aux);
+    bool found = f_stat(full, &fi) == FR_OK && !(fi.fattrib & AM_DIR);
+    if (!found) {
+        snprintf(full, AUX_PATH_MAX, "%s/%s", g_emuDir, auxBaseName(aux));
+        found = f_stat(full, &fi) == FR_OK && !(fi.fattrib & AM_DIR);
+        if (!found) snprintf(full, AUX_PATH_MAX, "%s/%s", AUX_ROMS_DIR, aux);
+    }
+    if (dir) snprintf(dir, AUX_PATH_MAX, "%.*s", (int)(auxBaseName(full) - full - 1), full);
+    return found;
 }
 
 // Write .flashed if the working copy differs from the file. A failure (write-
@@ -1505,7 +1551,8 @@ void drawUf2ErrorScreen(const char *filename, const uf2_diag_t *d, bool isAux)
     getButtonLabels(btn1, btn2);
 
     solidBar(0, COL_ERR_FG, COL_ERR_BG);
-    centerText(0, isAux ? "CANNOT FLASH THIS DATA FILE" : "CANNOT FLASH THIS FILE",
+    centerText(0, d->reason == UF2_DIAG_NOT_FOUND ? "DATA FILE NOT FOUND" :
+                  isAux ? "CANNOT FLASH THIS DATA FILE" : "CANNOT FLASH THIS FILE",
                COL_ERR_FG, COL_ERR_BG);
 
     putText(1, 2, "FILE", COL_HELP_HDR, COL_BG);
@@ -1540,13 +1587,13 @@ void drawUf2ErrorScreen(const char *filename, const uf2_diag_t *d, bool isAux)
         docRef = true;
     };
 
-    // The aux blob is a data image emitted by the application's own build (the
-    // Doom WAD), so there is no separate recipe to hand the user.
+    // The aux blob is a data image from the application's own release (the
+    // Doom WAD), which updateAll installs, so there is no recipe to hand the user.
     auto auxAdvice = [&]() {
-        F(ERR_COL_BODY, "This is a data file, produced by");
-        F(ERR_COL_BODY, "the application's own build. Copy");
-        F(ERR_COL_BODY, "it again from the release, or");
-        F(ERR_COL_BODY, "rebuild the application.");
+        F(ERR_COL_BODY, "This is a data file. Install it");
+        F(ERR_COL_BODY, "again with updateAll, or copy it");
+        F(ERR_COL_BODY, "again from the application's");
+        F(ERR_COL_BODY, "release.");
     };
 
     switch (d->reason) {
@@ -1608,6 +1655,16 @@ void drawUf2ErrorScreen(const char *filename, const uf2_diag_t *d, bool isAux)
         F(ERR_COL_BODY, "Copy the file to the SD card");
         F(ERR_COL_BODY, "again - the copy on the card is");
         F(ERR_COL_BODY, "damaged or incomplete.");
+        break;
+
+    case UF2_DIAG_NOT_FOUND:
+        // Only for an aux file: the FILE line shows where it belongs.
+        P(ERR_COL_BODY, "The application needs this data");
+        P(ERR_COL_BODY, "file, and it is not on the SD");
+        P(ERR_COL_BODY, "card.");
+        F(ERR_COL_BODY, "Run updateAll on a computer to");
+        F(ERR_COL_BODY, "install it, or copy the file to");
+        F(ERR_COL_BODY, "the folder shown above.");
         break;
 
     case UF2_DIAG_UNREADABLE:
@@ -1880,7 +1937,7 @@ void scanUf2Dir()
         const char *fname = (fidx >= 0) ? g_uf2[fidx].filename : nullptr;
         if (fidx < 0) {
             LOG("In-flash image has no counterpart on the card.");
-        } else if (recordStillMatches(FLASH_RECORD_EMU, fname)) {
+        } else if (recordStillMatches(FLASH_RECORD_EMU, g_emuDir, fname)) {
             // The cheap path: the card file is unchanged since the loader last
             // recorded it, and flash still CRCs to what it recorded.
             const uf2_fingerprint_t &rfp = g_flashrec.row[FLASH_RECORD_EMU].fp;
@@ -1905,7 +1962,7 @@ void scanUf2Dir()
                     } else {
                         LOG("In-flash image matches SD copy (CRC 0x%08X, %u bytes).",
                             (unsigned)fp.crc, (unsigned)fp.image_size);
-                        recordInFlash(FLASH_RECORD_EMU, fname, fp);
+                        recordInFlash(FLASH_RECORD_EMU, g_emuDir, fname, fp);
                         saveFlashRecord();
                     }
                 } else {
@@ -1987,10 +2044,10 @@ int buildEmuList()
             continue;
         }
         if (e.aux_uf2[0]) {
-            char auxFull[FF_MAX_LFN];
-            snprintf(auxFull, sizeof(auxFull), "%s/%s", g_emuDir, e.aux_uf2);
+            char auxFull[AUX_PATH_MAX];
             uint32_t lo, hi;
-            if (uf2_extent_from_file_family(auxFull, UF2_FAMILY_RP2350_DATA,
+            if (resolveAuxPath(e.aux_uf2, auxFull, nullptr) &&
+                uf2_extent_from_file_family(auxFull, UF2_FAMILY_RP2350_DATA,
                                             &lo, &hi) && hi > flash_end) {
                 LOG("  SKIP %s (aux %s at 0x%08X-0x%08X exceeds flash end 0x%08X)",
                     e.filename, e.aux_uf2, (unsigned)lo, (unsigned)hi,
@@ -2022,7 +2079,9 @@ int buildEmuList()
 //   MATCH   : SD file's CRC matches the bytes already at its target XIP address.
 //   DRIFT   : SD and flash differ (or the flash region is blank) -- reflash needed.
 //   ERROR   : couldn't fingerprint the SD file -- log and proceed without flashing.
-enum AuxState { AUX_NO_AUX, AUX_MATCH, AUX_DRIFT, AUX_ERROR };
+//   MISSING : the file is in neither /roms nor the config dir, and flash does
+//             not hold it either -- the application cannot run; tell the user.
+enum AuxState { AUX_NO_AUX, AUX_MATCH, AUX_DRIFT, AUX_ERROR, AUX_MISSING };
 
 static AuxState computeAuxDrift(int idx, uf2_fingerprint_t *out_fp)
 {
@@ -2030,20 +2089,33 @@ static AuxState computeAuxDrift(int idx, uf2_fingerprint_t *out_fp)
     if (idx < 0 || idx >= g_emu_count) return AUX_NO_AUX;
     const char *aux = g_emus[idx].aux_uf2;
     if (!aux[0]) return AUX_NO_AUX;
+    const char *name = auxBaseName(aux);
+    const uf2_fingerprint_t &rfp = g_flashrec.row[FLASH_RECORD_AUX].fp;
+
+    char full[AUX_PATH_MAX], dir[AUX_PATH_MAX];
+    if (!resolveAuxPath(aux, full, dir)) {
+        // Not on the card. If this very file was flashed before and that range
+        // still CRCs to the record, flash holds the data and the app can run.
+        if (recordRangeIntact(FLASH_RECORD_AUX, name)) {
+            LOG("Aux %s not on the card, but still in flash (CRC 0x%08X, %u bytes at "
+                "0x%08X); launching.", name, (unsigned)rfp.crc,
+                (unsigned)rfp.image_size, (unsigned)rfp.image_base);
+            if (out_fp) *out_fp = rfp;
+            return AUX_MATCH;
+        }
+        LOG("Aux %s not found in %s or %s, and not in flash", name, dir, g_emuDir);
+        return AUX_MISSING;
+    }
 
     // The cheap path, as for the emulator at boot: an aux file unchanged since
     // it was recorded, over a flash range that still CRCs to the record.
-    if (recordStillMatches(FLASH_RECORD_AUX, aux)) {
-        const uf2_fingerprint_t &rfp = g_flashrec.row[FLASH_RECORD_AUX].fp;
+    if (recordStillMatches(FLASH_RECORD_AUX, dir, name)) {
         LOG("Aux blob already in flash (CRC 0x%08X, %u bytes at 0x%08X; %s unchanged "
             "since %s); skipping.", (unsigned)rfp.crc, (unsigned)rfp.image_size,
-            (unsigned)rfp.image_base, aux, FLASH_RECORD_FILE);
+            (unsigned)rfp.image_base, full, FLASH_RECORD_FILE);
         if (out_fp) *out_fp = rfp;
         return AUX_MATCH;
     }
-
-    char full[FF_MAX_LFN];
-    snprintf(full, sizeof(full), "%s/%s", g_emuDir, aux);
 
     uf2_fingerprint_t fp = {0};
     if (!uf2_fingerprint_from_file_family(full, UF2_FAMILY_RP2350_DATA, &fp)) {
@@ -2061,7 +2133,7 @@ static AuxState computeAuxDrift(int idx, uf2_fingerprint_t *out_fp)
     if (flash_crc == fp.crc) {
         LOG("Aux blob already in flash (CRC 0x%08X, %u bytes at 0x%08X); skipping.",
             (unsigned)fp.crc, (unsigned)fp.image_size, (unsigned)fp.image_base);
-        recordInFlash(FLASH_RECORD_AUX, aux, fp);
+        recordInFlash(FLASH_RECORD_AUX, dir, name, fp);
         saveFlashRecord();
         return AUX_MATCH;
     }
@@ -2145,14 +2217,16 @@ void flashAndLaunch(int idx, bool flashEmu, bool flashAux, const uf2_fingerprint
 
     // Pre-flight the aux UF2 too, using its own target range (derived from
     // the fingerprint pass, so we don't re-scan the file).
-    char auxFull[FF_MAX_LFN] = {0};
+    char auxFull[AUX_PATH_MAX] = {0}, auxDir[AUX_PATH_MAX] = {0};
     uf2_load_stats_t astp = {};
     if (flashAux) {
         if (!auxFp || !g_emus[idx].aux_uf2[0]) {
             LOG("BUG: flashAux=true but no aux fingerprint / column");
             return;
         }
-        snprintf(auxFull, sizeof(auxFull), "%s/%s", g_emuDir, g_emus[idx].aux_uf2);
+        // computeAuxDrift() found it a moment ago; a card pulled since then
+        // fails the validation below as unreadable.
+        resolveAuxPath(g_emus[idx].aux_uf2, auxFull, auxDir);
         LOG("Pre-flight validating aux UF2 %s at [0x%08X..0x%08X)...",
             auxFull, (unsigned)auxFp->image_base,
             (unsigned)(auxFp->image_base + auxFp->image_size));
@@ -2169,7 +2243,7 @@ void flashAndLaunch(int idx, bool flashEmu, bool flashAux, const uf2_fingerprint
                 uf2_load_result_str(vr), uf2_diag_reason_str(d.reason),
                 (unsigned)d.image_base, (unsigned)d.image_end,
                 d.have_extent ? "" : ", unknown", (unsigned)d.family);
-            showUf2ErrorScreen(g_emus[idx].aux_uf2, &d, true);
+            showUf2ErrorScreen(auxFull, &d, true);
             return;
         }
     }
@@ -2248,7 +2322,7 @@ void flashAndLaunch(int idx, bool flashEmu, bool flashAux, const uf2_fingerprint
             (unsigned)ast.lowest_addr, (unsigned)ast.highest_addr);
         logPhase("aux flash (erase + write)");
         // Flash now holds the bytes the fingerprint at A-press was taken from.
-        recordInFlash(FLASH_RECORD_AUX, g_emus[idx].aux_uf2, *auxFp);
+        recordInFlash(FLASH_RECORD_AUX, auxDir, auxBaseName(g_emus[idx].aux_uf2), *auxFp);
 #if HSTX
         // Reset the bar to 0% for the next phase so the second flash starts
         // fresh instead of finishing full-on-full.
@@ -2279,7 +2353,7 @@ void flashAndLaunch(int idx, bool flashEmu, bool flashAux, const uf2_fingerprint
         fp.image_base = st.lowest_addr;
         fp.image_size = st.highest_addr - st.lowest_addr;
         if (uf2_fingerprint_from_xip(fp.image_base, fp.image_size, &fp.crc)) {
-            recordInFlash(FLASH_RECORD_EMU, g_emus[idx].filename, fp);
+            recordInFlash(FLASH_RECORD_EMU, g_emuDir, g_emus[idx].filename, fp);
         }
     }
     saveFlashRecord();
@@ -3020,14 +3094,22 @@ int main()
             AuxState auxState = computeAuxDrift(sel, &auxFp);
             bool flashAux = (auxState == AUX_DRIFT);
 
-            if (emuDrift || flashAux) {
+            if (auxState == AUX_MISSING) {
+                // Nothing flashed yet: say where the file belongs and go
+                // back to the picker.
+                char auxFull[AUX_PATH_MAX];
+                resolveAuxPath(g_emus[sel].aux_uf2, auxFull, nullptr);
+                uf2_diag_t d = {};
+                d.reason = UF2_DIAG_NOT_FOUND;
+                showUf2ErrorScreen(auxFull, &d, true);
+            } else if (emuDrift || flashAux) {
                 flashAndLaunch(sel, emuDrift, flashAux, flashAux ? &auxFp : nullptr);
             } else {
                 launchInFlash();
             }
-            // If we get here, either the launch was refused or flash failed;
-            // both paths reboot the bootloader so we shouldn't actually reach
-            // this. Force a fresh button read just in case.
+            // If we get here, the launch was refused (a rejected file, or
+            // missing data) and the user dismissed the page saying so; a
+            // failed flash reboots instead. Force a fresh button read.
             prevButtons = ~0u;
         }
 

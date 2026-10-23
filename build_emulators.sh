@@ -133,7 +133,10 @@ repo_name() { echo "${REPO_OF[$1]##*/}"; }
 # full-version was merged, main carries the -build-forbootloader.sh and
 # -build-full-forbootloader.sh families for every board it supports.
 #   doom_tiny       shareware, WHX baked into flash as a companion DATA UF2
-#                   (the emulators.txt aux_uf2 column)
+#                   (the emulators.txt aux_uf2 column), at the same address on
+#                   every board. It is installed next to the app, where the
+#                   loader falls back to; the SD-card archive leaves it out, as
+#                   updateAll makes the same file in /roms/doom/ from doom1.whx
 #   doom_tiny_full  registered/Ultimate DOOM; nothing extra in flash — at boot
 #                   the game copies /roms/doom/doom.whd from the SD card into
 #                   PSRAM, so the board must have PSRAM
@@ -147,8 +150,7 @@ repo_name() { echo "${REPO_OF[$1]##*/}"; }
 # both build at once, and one shared checkout would have two jobs fetching and
 # checking it out concurrently. That is cheap: neither repo vendors the SDK,
 # pico-extras or Pico-PIO-USB as submodules — they come from the environment —
-# so a clone is small. (pico-duke3D does track an 11 MB DUKE3D.GRP, which a
-# --depth 1 clone still pulls; the clone is reused across boards within a run.)
+# so a clone is small, and is reused across boards within a run.
 #
 # pico-quake2 ships one, pico-quake2, for boards 2 and 8. Like Duke it keeps no
 # companion image: the paks stay in /roms/quake2 on the SD card, and the game
@@ -219,7 +221,7 @@ declare -A SCRIPTED_UF2_OF=(
 # column), or "" when it needs none. Every per-board build script that emits one
 # emits it under exactly this name.
 declare -A SCRIPTED_AUX_OF=(
-    [doom_tiny]="doom1-whx.uf2"
+    [doom_tiny]="doom1-whx-bootloader.uf2"
     [doom_tiny_full]=""
     [duke3d_game]=""
     [pico-quake2]=""
@@ -702,11 +704,11 @@ _build_scripted() {
     rm -f "$out_dir/${prog}.uf2"
     if [ -n "$aux" ]; then
         rm -f "$out_dir/$aux"
-        # Also sweep the old per-board WAD name emulators.txt used to declare, so
-        # a card refreshed from an earlier build doesn't keep an orphan around.
+        # Also sweep the WAD names emulators.txt used to declare, so a card
+        # refreshed from an earlier build doesn't keep an orphan around.
         shopt -s nullglob
         local stale
-        for stale in "$out_dir"/doom1-whx-for-*.uf2; do rm -f "$stale"; done
+        for stale in "$out_dir"/doom1-whx-for-*.uf2 "$out_dir"/doom1-whx.uf2; do rm -f "$stale"; done
         shopt -u nullglob
     fi
 

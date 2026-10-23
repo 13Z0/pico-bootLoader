@@ -1,8 +1,8 @@
 # updateAll
 
-`updateAll` installs arcade ROM sets on the SD card of a pico-bootLoader console or of a standalone arcade application. It takes MAME ROM zips from a folder, downloads the zips that are not in it from the configured databases, and extracts each set into the folder on the SD card where its application looks for it.
+`updateAll` installs arcade ROM sets on the SD card of a pico-bootLoader console or of a standalone arcade application. It takes MAME ROM zips from a folder, downloads the zips that are not in it from the configured databases, and extracts each set into the folder on the SD card where its application looks for it. It also installs the freely distributed shareware and demo data of the ported games *Doom*, *Duke Nukem 3D* and *Quake II*; see [Game data](#game-data).
 
-The ROM sets are copyright of their manufacturers and are not included. The shipped `updateAll.json` configures one download database, [ArcadeROMsDB_MiSTer](https://github.com/zakk4223/ArcadeROMsDB_MiSTer), a third-party database that is not part of this project, so zips that are not in the zip folder are downloaded from it by default. The user is responsible for holding the rights to the ROM sets, whether they are supplied as zips or downloaded. To use only zips you supply, untick **Download missing zips** in the Windows program, pass `--no-download` (Python) or `-NoDownload` (PowerShell), or set `"databases": []` in `updateAll.json` and remove its `config_url`; see [Download databases](#download-databases).
+The ROM sets are copyright of their manufacturers and are not included. The shipped `updateAll.json` configures one download database, [ArcadeROMsDB_MiSTer](https://github.com/zakk4223/ArcadeROMsDB_MiSTer), a third-party database that is not part of this project, so zips that are not in the zip folder are downloaded from it by default. The user is responsible for holding the rights to the ROM sets, whether they are supplied as zips or downloaded. To use only zips you supply, untick **Download missing files** in the Windows program, pass `--no-download` (Python) or `-NoDownload` (PowerShell), or set `"databases": []` in `updateAll.json` and remove its `config_url`; see [Download databases](#download-databases).
 
 Three equivalent implementations are provided: `updateAll.exe`, a Windows program with a window, `updateAll.py` (Python) and `updateAll.ps1` (PowerShell). All three read the same configuration file, `updateAll.json`; the Windows program also carries a built-in copy of it. At every start, all three first read the latest version of that file from this repository, so that sets added after the SD-card archive was made are installed as well; see [Latest sets](#latest-sets).
 
@@ -70,17 +70,29 @@ pico-1943 plays four versions of 1943; updateAll installs the US one, MAME's `19
 
 The pico-galagino sets are those of the 47 games it plays from GalaginoPlus, all of them from its v0.2 on. Its table of sets, `galagino/gal_games.c`, is the source of these entries: `tools/mkupdateall.py` in pico-galagino writes them into `updateAll.json`.
 
+## Game data
+
+| ID | Application | Download | SD card folder |
+| --- | --- | --- | --- |
+| `doom` | *Doom!* (`doom_tiny`) | `doom1.whx`, the shareware `DOOM1.WAD` as stored in the [pico-doom](https://github.com/PicoPlus-devel/pico-doom) repository, installed as the UF2 image `doom1-whx-bootloader.uf2` for the loader to flash | `/roms/doom` |
+| `duke3d` | *Duke Nukem 3D* | `3dduke13.zip`, the shareware version 1.3d, from the [Internet Archive](https://archive.org/details/3dduke13): `DUKE3D.GRP` and `LICENSE.TXT` from the archive `DN3DSW13.SHR` inside it | `/roms/duke3d` |
+| `quake2` | *Quake II* | `pico-quake2_demo_sdcard.zip` from the [pico-quake2](https://github.com/PicoPlus-devel/pico-quake2/releases) release: `pak0.pak` and the player models of the Quake II demo, and its licence | `/roms/quake2` |
+
+These are the shareware and demo releases their publishers made freely available. Each is installed with its licence where it has one, and is downloaded from the address in its entry, not from a database. The Quake II demo is a download of about 35 MB.
+
+The *Doom!* data file is flashed by the loader together with the game; `/roms/doom` is the first place it looks for it. *Doom Full!* (`doom_tiny_full`) needs a registered or Ultimate DOOM WAD instead, which updateAll does not install; see the pico-bootLoader README.
+
 ## Windows program
 
 `updateAll.exe` is a single file of about 180 KB. It needs no installation and no runtime, and runs on Windows 10 and 11. The SD-card archive of pico-bootLoader holds it in the `updateAll` folder, next to `emu`.
 
 1. Start `updateAll.exe`. The SD card is selected for you: the card the program was started from, or else the first removable drive that holds a pico-bootLoader card (an `emu` folder), or else the first removable drive.
 2. Under **SD card**, choose another card if needed. Any existing folder can be chosen instead.
-3. Under **Zip folder**, choose the folder with the MAME zips you already have, if any. When **Download missing zips** is ticked, which it is by default, zips that are not in the folder are downloaded from the configured databases; without a zip folder they are downloaded into a temporary folder that is removed afterwards.
+3. Under **Zip folder**, choose the folder with the MAME zips you already have, if any. When **Download missing files** is ticked, which it is by default, zips that are not in the folder are downloaded from the configured databases, and game data from its own address; without a zip folder they are downloaded into a temporary folder that is removed afterwards.
 4. Untick the sets that are not wanted. The **Status** column shows which sets are already complete on the card.
-5. Select **Install**. The log shows the same report as the scripts. **Dry run** reports what would be downloaded and written without doing it. **Cancel** stops a run before the next file.
+5. Select **Install**. The log shows the same report as the scripts, and the progress bar follows each download and each conversion of game data into a UF2 image. **Dry run** reports what would be downloaded and written without doing it. **Cancel** stops a run before the next file.
 
-The program reads the latest configuration from this repository when it starts; until it has, **Install** is unavailable. When it cannot be read, the program uses an `updateAll.json` that is next to it, and its built-in copy otherwise. The line `Configuration:` in the log shows which one is used. Apart from the sets on the card, downloaded zips in the zip folder and its temporary folder, it writes nothing: no settings, no registry entries.
+The program reads the latest configuration from this repository when it starts; until it has, **Install** is unavailable. When it cannot be read, the program uses an `updateAll.json` that is next to it, and its built-in copy otherwise. The line `Configuration:` in the log shows which one is used. Apart from the sets on the card, downloaded files in the zip folder and its temporary folder, it writes nothing: no settings, no registry entries.
 
 The program is not signed, so Windows may show "Windows protected your PC" the first time it is started. Select **More info**, then **Run anyway**.
 
@@ -107,10 +119,10 @@ If Windows refuses to run the script because it is not signed, start it with `po
 | Python | PowerShell | Description |
 | --- | --- | --- |
 | `--sd DIR` | `-Sd DIR` | Root of the SD card. Required. |
-| `--zips DIR` | `-Zips DIR` | Folder with MAME zips you already have. Downloaded zips are kept here as well; it is created if necessary. Without it, zips are downloaded into a temporary folder that is removed after the run. Required when no database is configured. |
+| `--zips DIR` | `-Zips DIR` | Folder with MAME zips you already have. Downloaded zips and game data are kept here as well; it is created if necessary. Without it, they are downloaded into a temporary folder that is removed after the run. Required when nothing is to be downloaded. |
 | `--core ID[,ID]` | `-Core ID[,ID]` | Install only these sets. Default: all configured sets. |
 | `--db SRC[,SRC]` | `-Database SRC[,SRC]` | Download databases to use in addition to those in the configuration: URLs or files. |
-| `--no-download` | `-NoDownload` | Use only the zips already in the zip folder. |
+| `--no-download` | `-NoDownload` | Use only the files already in the zip folder. |
 | `--dry-run` | `-DryRun` | Report what would be downloaded and written without doing it. |
 | `--list` | `-List` | List the configured sets and databases. |
 | `--config FILE` | `-Config FILE` | Use another configuration file. Default: `updateAll.json` next to the script. When it has a `config_url`, the configuration is read from there, and from this file only if that fails. |
@@ -119,9 +131,11 @@ If Windows refuses to run the script because it is not signed, start it with `po
 
 - The card is checked first. A set that is already complete on the card needs no zip, so nothing is read or downloaded for it.
 - Zips are looked up by name in the zip folder, ignoring case. A zip that is not there is downloaded from the first database that lists it. A set whose zip is neither in the folder nor in a database is skipped.
+- Game data is looked up in the zip folder under the last part of its address, for example `3dduke13.zip`, and downloaded from that address when it is not there.
 - Databases are only read when a zip is needed and missing, so a run on an up-to-date card, or with every zip at hand, needs no network access beyond reading the configuration (see [Latest sets](#latest-sets)). A zip that is already in the zip folder is never downloaded again.
-- A download is written to a `.part` file and kept only when its size and MD5 match the database and it is a valid zip. Failed downloads are retried twice, except after an HTTP 4xx response.
+- A download is written to a `.part` file and kept only when its size and MD5 match the database and it is a valid zip. Game data has no database entry and need not be a zip; its files are checked against the configuration when they are installed. Failed downloads are retried twice, except after an HTTP 4xx response.
 - Only the files listed in the configuration are extracted. They are identified by size and CRC32, as the applications identify them, so merged, split and non-merged sets are all accepted, as are sets whose files carry other names. In a merged set, the files at the root of the zip take precedence over the clone subfolders.
+- Game data that is a single file rather than a zip is installed as it is, or, when its entry has `uf2`, as a UF2 image of it. The report then names the conversion, for example `converted doom1.whx to a UF2 image at 0x10200000`, and an image that does not match the configuration is reported as not the expected file. The zips that an entry names under `archives`, such as the self-extracting archive inside the Duke Nukem 3D shareware zip, are searched as well.
 - Files are written under the names listed in the configuration. pico-outrun opens its files by name, so for OutRun this is required.
 - A file that is already on the card with the correct size and CRC32 is left as it is. Other files on the card are never modified or deleted.
 - Every file is verified before it is written. A damaged entry, or a file of the expected name with other contents, is reported and not written.
@@ -166,7 +180,7 @@ A database uses the format of the [MiSTer Downloader](https://github.com/MiSTer-
 | `size` | Size in bytes. Optional, checked when present. |
 | `hash` | MD5 of the zip. Optional, checked when present. |
 
-Databases are listed in `updateAll.json` under `databases`, as URLs or as file paths relative to the configuration file, or given on the command line. The shipped configuration lists the ArcadeROMsDB_MiSTer database; an empty list, `"databases": []`, switches downloading off, and the Windows program then greys out **Download missing zips**. Since the configuration read from `config_url` replaces the local one, remove `config_url` as well; see [Latest sets](#latest-sets). The Windows program reads an `updateAll.json` placed next to it in preference to its built-in copy, so editing the file in the `updateAll` folder is enough. The format of the list:
+Databases are listed in `updateAll.json` under `databases`, as URLs or as file paths relative to the configuration file, or given on the command line. The shipped configuration lists the ArcadeROMsDB_MiSTer database; an empty list, `"databases": []`, switches downloading of ROM sets off. Game data is still downloaded, unless **Download missing files** is unticked or `--no-download` is given. Since the configuration read from `config_url` replaces the local one, remove `config_url` as well; see [Latest sets](#latest-sets). The Windows program reads an `updateAll.json` placed next to it in preference to its built-in copy, so editing the file in the `updateAll` folder is enough. The format of the list:
 
 ```json
 {
@@ -202,6 +216,34 @@ Add an entry to `cores`:
 | `zips` | Zips to search, in order. For a clone in a split set, list the parent zip as well, since the clone zip does not contain the files it shares with the parent. |
 | `destination` | Folder on the SD card, relative to its root. |
 | `files` | Every file the application needs: the name it is written under, its size in bytes, and its CRC32 in hexadecimal. The values are those of the application's ROM table, and of `mame -listxml <set>`. |
+
+## Adding game data
+
+Game data that comes from one address is added to `data`, a list next to `cores`. Copies of updateAll older than the list skip it, so they keep working with the same file.
+
+```json
+"data": [
+  {
+    "id": "quake2",
+    "name": "Quake II",
+    "set": "demo 3.14",
+    "url": "https://github.com/PicoPlus-devel/pico-quake2/releases/download/v0.2-alpha/pico-quake2_demo_sdcard.zip",
+    "destination": "/roms/quake2",
+    "files": [
+      { "name": "baseq2/pak0.pak", "size": 49951322, "crc": "cdd535b6" }
+    ]
+  }
+]
+```
+
+The fields are those of a set, except:
+
+| Field | Meaning |
+| --- | --- |
+| `url` | Download address, instead of `zips`. The download is kept in the zip folder under the last part of the address. It may be a zip, or the one file to install. Point it at a fixed release rather than the latest one, so that the sizes and CRC32s below stay correct. |
+| `archives` | Optional. Names of zips inside the download to search as well, such as `DN3DSW13.SHR` in the Duke Nukem 3D shareware zip, which is a self-extracting archive. |
+| `uf2` | Optional. `{ "address": "0x10200000", "family": "0xe48bff58" }`: the download is one binary file, installed as a UF2 image of it at that flash address with that family ID, as `picotool uf2 convert -t bin -o <address> --family <family>` writes it. The `files` entry gives the name, size and CRC32 of the image. |
+| `files` | As for a set, but a name may include subfolders of `destination`, separated with `/`, such as `baseq2/pak0.pak`. |
 
 ## Building the Windows program
 

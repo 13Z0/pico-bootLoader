@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-updateAll - install arcade ROM sets on the SD card.
+updateAll - install arcade ROM sets and game data on the SD card.
 
 Takes MAME ROM zips from one folder, the way MiSTer keeps them in /games/mame,
 and extracts each set into the folder on the SD card where its application
 looks for it. The sets, their zips and their folders are defined in
 updateAll.json next to this script; a new core is added there, not here.
+
+The "data" list of updateAll.json adds the shareware and demo data of the
+ported games. Each entry is downloaded from its own URL, as a zip or as the one
+file to install; its files may go into subfolders, and zips inside the
+download that it names under "archives" are searched as well. An entry with
+"uf2" turns the downloaded file into a UF2 image for the loader to flash.
 
 A zip that is not in the folder is downloaded into it first, from the
 databases listed in updateAll.json or given with --db; without --zips, into a
@@ -42,6 +48,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import sys
 import tempfile
 import time
@@ -76,6 +83,14 @@ def _is_url(src):
     return re.match(r"^https?://", src, re.I) is not None
 
 
+def _hex32(text):
+    """int(text, 16), as for a CRC, limited to 32 bits."""
+    n = int(text, 16)
+    if not 0 <= n <= 0xFFFFFFFF:
+        raise ValueError(text)
+    return n
+
+
 def load_config(path):
     """Returns (cores, databases, config_url); relative database paths are
     made relative to the configuration file."""
@@ -98,16 +113,49 @@ def parse_config(text, path, config_dir):
     cores = cfg.get("cores") if isinstance(cfg, dict) else None
     if not isinstance(cores, list) or not cores:
         raise ConfigError(f"{path}: no cores defined")
+    # "data" holds game data that comes from one URL rather than from a MAME
+    # zip in the databases. It is a key of its own because copies of updateAll
+    # that predate it read this file too, and skip keys they do not know.
+    data = cfg.get("data", [])
+    if not isinstance(data, list):
+        raise ConfigError(f"{path}: 'data' must be a list")
 
     ids = set()
-    for core in cores:
+    for core, is_data in [(c, False) for c in cores] + [(d, True) for d in data]:
         cid = core.get("id", "?")
-        for key in ("id", "name", "zips", "destination", "files"):
+        for key in ("id", "name", "url" if is_data else "zips", "destination", "files"):
             if key not in core:
                 raise ConfigError(f"{path}: core '{cid}' has no '{key}'")
         if cid.lower() in ids:
             raise ConfigError(f"{path}: core '{cid}' is defined twice")
         ids.add(cid.lower())
+
+        core["_url"] = None
+        core["_archives"] = []
+        core["_uf2"] = None
+        if is_data:
+            # The file is kept in the zip folder under the last part of the
+            # URL, which is also the name in the "Zip" column.
+            url = core["url"]
+            zname = ""
+            if isinstance(url, str) and _is_url(url):
+                zname = urllib.parse.unquote(urllib.parse.urlsplit(url).path.rsplit("/", 1)[-1])
+            if _bad_name(zname):
+                raise ConfigError(f"{path}: core '{cid}' has an invalid url '{url}'")
+            archives = core.get("archives", [])
+            if (not isinstance(archives, list) or
+                    any(not isinstance(a, str) or _bad_name(a) for a in archives)):
+                raise ConfigError(f"{path}: core '{cid}' has an invalid archive name")
+            uf2 = core.get("uf2")
+            if uf2 is not None:
+                try:
+                    core["_uf2"] = (_hex32(uf2["address"]), _hex32(uf2["family"]))
+                except (KeyError, TypeError, ValueError):
+                    raise ConfigError(f"{path}: core '{cid}' needs a hexadecimal 'address' "
+                                      "and 'family' in 'uf2'")
+            core["_url"] = url
+            core["_archives"] = archives
+            core["zips"] = [zname]
 
         dest = core["destination"].replace("\\", "/").strip("/")
         parts = dest.split("/")
@@ -122,7 +170,11 @@ def parse_config(text, path, config_dir):
         if any(_bad_name(z) for z in core["zips"]):
             raise ConfigError(f"{path}: core '{cid}' has an invalid zip name")
         for f in core["files"]:
-            if _bad_name(f.get("name", "")):
+            # Game data may go into subfolders of its destination; ROM sets
+            # may not, as older copies of updateAll would reject that.
+            name = f.get("name", "")
+            f["_parts"] = name.split("/") if is_data and isinstance(name, str) else [name]
+            if any(_bad_name(part) for part in f["_parts"]):
                 raise ConfigError(f"{path}: core '{cid}' has an invalid file name "
                                   f"'{f.get('name', '')}'")
             try:
@@ -143,7 +195,7 @@ def parse_config(text, path, config_dir):
         config_url = None
     elif not (isinstance(config_url, str) and _is_url(config_url)):
         raise ConfigError(f"{path}: 'config_url' must be an http or https URL")
-    return cores, databases, config_url
+    return cores + data, databases, config_url
 
 
 def fetch_config(url, config_dir):
@@ -238,7 +290,7 @@ class Databases:
         return None
 
 
-def download(url, dest, size=None, md5=None):
+def download(url, dest, size=None, md5=None, need_zip=True):
     """Downloads to dest via a .part file; returns the number of bytes."""
     tmp = dest + ".part"
     reason = "no attempt made"
@@ -257,7 +309,7 @@ def download(url, dest, size=None, md5=None):
                 raise DownloadError(f"received {got} bytes, the database says {size}")
             if md5 and digest.hexdigest().lower() != str(md5).lower():
                 raise DownloadError("the MD5 does not match the database")
-            if not zipfile.is_zipfile(tmp):
+            if need_zip and not zipfile.is_zipfile(tmp):
                 raise DownloadError("the file received is not a zip")
             os.replace(tmp, dest)
             return got
@@ -276,30 +328,41 @@ def download(url, dest, size=None, md5=None):
     raise DownloadError(reason)
 
 
-def fetch_missing_zips(core, zip_dir, zip_listing, databases, dry_run):
-    """Downloads the core's zips that are not in zip_dir. Returns (notes,
+def fetch_missing_zips(core, zip_dir, zip_listing, databases, dry_run, url_downloads):
+    """Downloads the core's zips that are not in zip_dir, from the databases,
+    or from the core's own URL when url_downloads is true. Returns (notes,
     errors, pending); pending is true when a dry run would have downloaded."""
     notes, errors, pending = [], [], False
     have = {e.lower() for e in zip_listing}
     for zname in core["zips"]:
         if zname.lower() in have:
             continue
-        hit = databases.find(zname)
-        if not hit:
-            continue
-        db, url, size, md5 = hit
+        if core["_url"]:
+            if not url_downloads:
+                continue
+            url, size, md5 = core["_url"], None, None
+            source = urllib.parse.urlsplit(url).hostname or url
+        else:
+            hit = databases.find(zname)
+            if not hit:
+                continue
+            db, url, size, md5 = hit
+            source = db.id
         if dry_run:
-            notes.append(f"would download {zname} from {db.id}")
+            notes.append(f"would download {zname} from {source}")
+            if core["_uf2"]:
+                notes.append(uf2_note(zname, core["_uf2"][0], dry_run))
             pending = True
             continue
         try:
             os.makedirs(zip_dir, exist_ok=True)
-            got = download(url, os.path.join(zip_dir, zname), size, md5)
+            got = download(url, os.path.join(zip_dir, zname), size, md5,
+                           need_zip=not core["_url"])
         except (DownloadError, OSError) as e:
-            errors.append(f"download of {zname} from {db.id} failed: {e}")
+            errors.append(f"download of {zname} from {source} failed: {e}")
             continue
         zip_listing.append(zname)
-        notes.append(f"downloaded {zname} ({(got + 1023) // 1024} KB) from {db.id}")
+        notes.append(f"downloaded {zname} ({(got + 1023) // 1024} KB) from {source}")
     return notes, errors, pending
 
 
@@ -331,12 +394,96 @@ def entry_rank(info, wanted_name):
     return (in_subfolder, other_name)
 
 
+def to_uf2(data, address, family):
+    """data as a UF2 image at address with this family ID, as picotool's
+    "uf2 convert -t bin" writes it: 256 bytes in each 512-byte block, the last
+    one padded with zeros."""
+    n = (len(data) + 255) // 256
+    out = bytearray()
+    for i in range(n):
+        out += struct.pack("<8I", 0x0A324655, 0x9E5D5157, 0x00002000,
+                           (address + 256 * i) & 0xFFFFFFFF, 256, i, n, family)
+        out += data[256 * i:256 * (i + 1)].ljust(476, b"\0")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
+
+
+class PlainFile:
+    """A downloaded game-data file that is not a zip, opened as if it were a
+    zip holding just itself, so that install_core treats both alike. With a
+    (address, family) for uf2, it holds the file as a UF2 image instead."""
+
+    def __init__(self, path, uf2=None):
+        with open(path, "rb") as f:
+            self.data = f.read()
+        if uf2:
+            self.data = to_uf2(self.data, *uf2)
+        self.filename = path
+        self.label = os.path.basename(path)
+        self.info = zipfile.ZipInfo(self.label)
+        self.info.file_size = len(self.data)
+        self.info.CRC = zlib.crc32(self.data) & 0xFFFFFFFF
+
+    def infolist(self):
+        return [self.info]
+
+    def read(self, info):
+        return self.data
+
+    def close(self):
+        pass
+
+
+def uf2_note(name, address, dry_run):
+    return f"{'would convert' if dry_run else 'converted'} {name} to a UF2 image at 0x{address:08X}"
+
+
+def open_archives(core, path, res, dry_run):
+    """The archives to search in the file at path: the zip itself, or the
+    file alone when game data is not a zip or is to become a UF2 image, plus
+    the zips inside it that the core names in "archives". Problems are added
+    to res.errors, and a conversion to res.notes."""
+    name = os.path.basename(path)
+    if core["_url"] and (core["_uf2"] or not zipfile.is_zipfile(path)):
+        try:
+            plain = PlainFile(path, core["_uf2"])
+        except OSError as e:
+            res.errors.append(f"cannot open {name}: {e}")
+            return []
+        if core["_uf2"]:
+            res.notes.append(uf2_note(name, core["_uf2"][0], dry_run))
+        return [plain]
+    try:
+        zf = zipfile.ZipFile(path)
+    except (OSError, zipfile.BadZipFile) as e:
+        res.errors.append(f"cannot open {name}: {e}")
+        return []
+    zf.label = name
+    archives = [zf]
+    for inner in core["_archives"]:
+        found = [i for i in zf.infolist()
+                 if i.filename.replace("\\", "/").rsplit("/", 1)[-1].lower() == inner.lower()]
+        if not found:
+            res.errors.append(f"{name} holds no {inner}")
+            continue
+        label = f"{name}:{found[0].filename}"
+        try:
+            inner_zf = zipfile.ZipFile(io.BytesIO(zf.read(found[0])))
+        except (OSError, zipfile.BadZipFile, NotImplementedError, zlib.error) as e:
+            res.errors.append(f"cannot open {label}: {e}")
+            continue
+        inner_zf.label = label
+        archives.append(inner_zf)
+    return archives
+
+
 class Result:
     def __init__(self):
         self.written = 0
         self.current = 0
         self.missing = []
         self.errors = []
+        self.notes = []
         self.skipped = None   # reason, when no zip was found
 
     @property
@@ -360,10 +507,7 @@ def install_core(core, zip_dir, zip_listing, sd_root, dry_run):
     archives = []
     try:
         for p in zip_paths:
-            try:
-                archives.append(zipfile.ZipFile(p))
-            except (OSError, zipfile.BadZipFile) as e:
-                res.errors.append(f"cannot open {os.path.basename(p)}: {e}")
+            archives += open_archives(core, p, res, dry_run)
 
         index = {}
         by_name = {}
@@ -376,23 +520,27 @@ def install_core(core, zip_dir, zip_listing, sd_root, dry_run):
 
         dest = os.path.join(sd_root, *core["_dest_parts"])
         for f in core["files"]:
-            target = os.path.join(dest, f["name"])
+            target = os.path.join(dest, *f["_parts"])
+            base = f["_parts"][-1]
             if is_current(target, f["_size"], f["_crc"]):
                 res.current += 1
                 continue
 
             candidates = index.get((f["_size"], f["_crc"]))
             if not candidates:
-                same_name = by_name.get(f["name"].lower())
-                if same_name:
-                    zf, info = min(same_name, key=lambda c: entry_rank(c[1], f["name"]))
-                    res.errors.append(f"{os.path.basename(zf.filename)}:{info.filename} is not the "
+                same_name = by_name.get(base.lower())
+                if core["_uf2"] and archives:
+                    res.errors.append(f"the UF2 image of {archives[0].label} is not the expected "
+                                      "file (damaged, or from a different version)")
+                elif same_name:
+                    zf, info = min(same_name, key=lambda c: entry_rank(c[1], base))
+                    res.errors.append(f"{zf.label}:{info.filename} is not the "
                                       "expected file (damaged, or from a different version of the set)")
                 else:
                     res.missing.append(f["name"])
                 continue
-            zf, info = min(candidates, key=lambda c: entry_rank(c[1], f["name"]))
-            source = f"{os.path.basename(zf.filename)}:{info.filename}"
+            zf, info = min(candidates, key=lambda c: entry_rank(c[1], base))
+            source = f"{zf.label}:{info.filename}"
 
             if dry_run:
                 res.written += 1
@@ -406,7 +554,7 @@ def install_core(core, zip_dir, zip_listing, sd_root, dry_run):
                 res.errors.append(f"{source}: contents do not match the size and CRC")
                 continue
             try:
-                os.makedirs(dest, exist_ok=True)
+                os.makedirs(os.path.dirname(target), exist_ok=True)
                 tmp = target + ".tmp"
                 with open(tmp, "wb") as out:
                     out.write(data)
@@ -442,11 +590,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Extract MAME arcade ROM zips into the folders on the SD card "
                     "where the applications look for them, downloading missing zips "
-                    "from the configured databases first.")
+                    "from the configured databases first, and install the game data "
+                    "of the ported games.")
     ap.add_argument("--zips", metavar="DIR",
                     help="folder with MAME zips you already have, e.g. phoenix.zip; "
-                         "downloaded zips are kept here as well (default: download "
-                         "into a temporary folder that is removed afterwards)")
+                         "downloaded zips and game data are kept here as well (default: "
+                         "download into a temporary folder that is removed afterwards)")
     ap.add_argument("--sd", metavar="DIR",
                     help="root of the SD card, e.g. E:\\ or /media/user/SDCARD; "
                          "any existing folder will do")
@@ -457,7 +606,7 @@ def main(argv=None):
                     help="download database to use in addition to those in the "
                          "configuration; repeat or separate with commas")
     ap.add_argument("--no-download", action="store_true",
-                    help="use only the zips already in the zip folder")
+                    help="use only the files already in the zip folder")
     ap.add_argument("--config", metavar="FILE", default=DEFAULT_CONFIG,
                     help="configuration file (default: updateAll.json next to this "
                          "script); when it has a config_url, the configuration is read "
@@ -494,7 +643,10 @@ def main(argv=None):
     if not os.path.isdir(args.sd):
         print(f"ERROR: SD card root not found: {args.sd}", file=sys.stderr)
         return 1
-    may_download = bool(db_sources) and not args.no_download
+    # Game data has its own URL, so it can be downloaded without a database.
+    use_databases = bool(db_sources) and not args.no_download
+    url_downloads = not args.no_download
+    may_download = use_databases or (url_downloads and any(c["_url"] for c in cores))
     if not args.zips and not may_download:
         print("ERROR: nothing to install from: give a zip folder with --zips, "
               "or configure a database to download from", file=sys.stderr)
@@ -518,7 +670,7 @@ def main(argv=None):
         print(f"Sets from:    {sets_from}")
     print(f"Zips from:    {os.path.abspath(args.zips) if args.zips else 'downloads only'}")
     print(f"SD card:      {os.path.abspath(args.sd)}")
-    if may_download:
+    if use_databases:
         print(f"Databases:    {len(db_sources)}, used for zips that are not in the zip folder")
     if args.dry_run:
         print("Dry run:      nothing is downloaded or written")
@@ -528,7 +680,7 @@ def main(argv=None):
     temp_dir = None if args.zips else tempfile.mkdtemp(prefix="updateAll-")
     try:
         return run(args, cores, requested, args.zips or temp_dir,
-                   Databases(db_sources if may_download else []))
+                   Databases(db_sources if use_databases else []), url_downloads)
     finally:
         if temp_dir:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -537,10 +689,10 @@ def main(argv=None):
 def files_to_install(core, sd_root):
     dest = os.path.join(sd_root, *core["_dest_parts"])
     return [f for f in core["files"]
-            if not is_current(os.path.join(dest, f["name"]), f["_size"], f["_crc"])]
+            if not is_current(os.path.join(dest, *f["_parts"]), f["_size"], f["_crc"])]
 
 
-def run(args, cores, requested, zip_dir, databases):
+def run(args, cores, requested, zip_dir, databases, url_downloads):
     zip_listing = []
     if os.path.isdir(zip_dir):
         zip_listing = [e for e in os.listdir(zip_dir) if os.path.isfile(os.path.join(zip_dir, e))]
@@ -555,19 +707,19 @@ def run(args, cores, requested, zip_dir, databases):
             print(f"  {len(core['files'])} up to date")
             continue
 
-        notes, dl_errors, pending = fetch_missing_zips(core, zip_dir, zip_listing,
-                                                       databases, args.dry_run)
+        notes, dl_errors, pending = fetch_missing_zips(core, zip_dir, zip_listing, databases,
+                                                       args.dry_run, url_downloads)
         res, used = install_core(core, zip_dir, zip_listing, args.sd, args.dry_run)
         res.errors[:0] = dl_errors
 
         if res.skipped and not pending and not dl_errors:
             skipped += 1
-            where = ", and not in any database" if databases.loaded else ""
+            where = ", and not in any database" if databases.loaded and not core["_url"] else ""
             print(f"{core['name']}: skipped, {res.skipped}{where}")
             continue
 
         print(f"{core['name']}: {', '.join(used or core['zips'])} -> {core['_dest_shown']}")
-        for note in notes:
+        for note in notes + res.notes:
             print(f"  {note}")
         if res.skipped:
             for err in res.errors:

@@ -71,7 +71,7 @@ uf2_load_result_t uf2_validate_file(const char *name, uf2_load_stats_t *stats);
 /*
  * Same as uf2_load_file / uf2_validate_file, but with an explicit target range
  * [region_base, region_end) and expected_family. Used for aux blobs
- * (e.g. Doom WHX at 0x10400000, DATA family). region_base must be
+ * (e.g. Doom WHX at 0x10200000, DATA family). region_base must be
  * >= APP_BASE_ADDR (we never write into the bootloader partition) and
  * region_end must be <= the runtime-clamped g_app_end_addr. `validated` as for
  * uf2_load_file, from a uf2_validate_file_ex call with the same arguments.

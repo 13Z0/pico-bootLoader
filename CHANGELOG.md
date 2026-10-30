@@ -6,6 +6,21 @@ A resident .uf2 bootloader / front-end for the RP2350 retro-emulator family (pic
 
 [Binaries for each configuration and PCB design are at the end of this page](#downloads___).
 
+## v0.9
+
+USB controllers on the Adafruit Fruit Jam and the other boards with PIO-USB
+are now found at every start, in the menu and in the applications.
+
+> **Do you need to update?** Yes, on boards with PIO-USB: re-flash the board
+> and replace the `/emu` folder on the card with the one in the new
+> `pico-bootLoader_sdcard.zip`.
+
+### Changes
+
+- **USB controllers on the Adafruit Fruit Jam and other boards with PIO-USB are
+  now found at every start.** On boards with an older RP2350 chip they were
+  often not detected, in the menu and in the applications.
+
 ## v0.8
 
 **updateAll** now also installs the free shareware and demo data of *Doom*,
